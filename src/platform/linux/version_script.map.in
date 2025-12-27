@@ -1,0 +1,71 @@
+# alloc8 version script for Linux
+# Controls symbol visibility and GLIBC versioning
+
+GLIBC_2.2.5 {
+  global:
+    # Core allocation functions
+    malloc;
+    free;
+    calloc;
+    realloc;
+    memalign;
+    posix_memalign;
+    aligned_alloc;
+
+    # Size query
+    malloc_usable_size;
+
+    # String functions
+    strdup;
+    strndup;
+
+    # Page-aligned allocation
+    valloc;
+    pvalloc;
+
+    # GNU extensions
+    reallocarray;
+    cfree;
+    mallopt;
+    malloc_trim;
+    malloc_stats;
+    mallinfo;
+
+    # Internal libc names
+    __libc_malloc;
+    __libc_free;
+    __libc_calloc;
+    __libc_realloc;
+    __libc_memalign;
+
+    # C++ operators
+    _Znwm;                    # operator new(size_t)
+    _Znam;                    # operator new[](size_t)
+    _ZdlPv;                   # operator delete(void*)
+    _ZdaPv;                   # operator delete[](void*)
+    _ZnwmRKSt9nothrow_t;      # operator new(size_t, nothrow)
+    _ZnamRKSt9nothrow_t;      # operator new[](size_t, nothrow)
+    _ZdlPvRKSt9nothrow_t;     # operator delete(void*, nothrow)
+    _ZdaPvRKSt9nothrow_t;     # operator delete[](void*, nothrow)
+    _ZdlPvm;                  # operator delete(void*, size_t)
+    _ZdaPvm;                  # operator delete[](void*, size_t)
+
+    # C++17 aligned new/delete
+    _ZnwmSt11align_val_t;     # operator new(size_t, align_val_t)
+    _ZnamSt11align_val_t;     # operator new[](size_t, align_val_t)
+    _ZdlPvSt11align_val_t;    # operator delete(void*, align_val_t)
+    _ZdaPvSt11align_val_t;    # operator delete[](void*, align_val_t)
+
+    # xxmalloc interface (for debugging/direct calls)
+    xxmalloc;
+    xxfree;
+    xxrealloc;
+    xxcalloc;
+    xxmemalign;
+    xxmalloc_usable_size;
+    xxmalloc_lock;
+    xxmalloc_unlock;
+
+  local:
+    *;
+};

@@ -1,0 +1,12 @@
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/alloc8Targets.cmake")
+
+# Platform-specific source files for interposition
+# Users should add these to their shared library target
+set(ALLOC8_INTERPOSE_SOURCES "@ALLOC8_INTERPOSE_SOURCES@")
+
+# Version script for Linux (empty on other platforms)
+set(ALLOC8_VERSION_SCRIPT "@ALLOC8_VERSION_SCRIPT@")
+
+check_required_components(alloc8)
