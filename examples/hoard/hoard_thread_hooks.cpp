@@ -27,31 +27,11 @@
 extern Hoard::HoardHeapType* getMainHoardHeap();
 
 // ─── THREAD-LOCAL STORAGE ────────────────────────────────────────────────────
-// Use pthread_key for TLS since __thread can have issues during early init
+// Use __thread for fast TLS access (much faster than pthread_getspecific)
+// These are defined here but also extern'd in hoard_alloc8.cpp for direct access
 
-static pthread_key_t theHeapKey;
-static pthread_once_t key_once = PTHREAD_ONCE_INIT;
-static bool initializedTSD = false;
-
-static void deleteThatHeap(void* p) {
-  if (p) {
-    reinterpret_cast<TheCustomHeapType*>(p)->clear();
-    getMainHoardHeap()->free(p);
-    getMainHoardHeap()->releaseHeap();
-  }
-}
-
-static void make_heap_key() {
-  pthread_key_create(&theHeapKey, deleteThatHeap);
-}
-
-static bool initTSD() {
-  if (!initializedTSD) {
-    pthread_once(&key_once, make_heap_key);
-    initializedTSD = true;
-  }
-  return true;
-}
+__thread TheCustomHeapType* theCustomHeap = nullptr;
+bool initializedTSD = false;
 
 // ─── EXPORTED FUNCTIONS FOR HOARD ────────────────────────────────────────────
 
@@ -60,25 +40,20 @@ bool isCustomHeapInitialized() {
 }
 
 static TheCustomHeapType* initializeCustomHeap() {
-  TheCustomHeapType* heap =
-      reinterpret_cast<TheCustomHeapType*>(pthread_getspecific(theHeapKey));
-  if (heap == nullptr) {
+  if (theCustomHeap == nullptr) {
     size_t sz = sizeof(TheCustomHeapType);
     char* mh = reinterpret_cast<char*>(getMainHoardHeap()->malloc(sz));
-    heap = new (mh) TheCustomHeapType(getMainHoardHeap());
-    pthread_setspecific(theHeapKey, heap);
+    theCustomHeap = new (mh) TheCustomHeapType(getMainHoardHeap());
   }
-  return heap;
+  return theCustomHeap;
 }
 
 TheCustomHeapType* getCustomHeap() {
-  initTSD();
-  TheCustomHeapType* heap =
-      reinterpret_cast<TheCustomHeapType*>(pthread_getspecific(theHeapKey));
-  if (heap == nullptr) {
-    heap = initializeCustomHeap();
+  if (__builtin_expect(theCustomHeap != nullptr, 1)) {
+    return theCustomHeap;
   }
-  return heap;
+  initializedTSD = true;
+  return initializeCustomHeap();
 }
 
 // ─── ALLOC8 THREAD LIFECYCLE HOOKS ───────────────────────────────────────────
@@ -98,12 +73,14 @@ void xxthread_init(void) {
 
 // Called by alloc8 when a thread is about to exit
 void xxthread_cleanup(void) {
-  TheCustomHeapType* heap = getCustomHeap();
-  if (heap) {
+  if (theCustomHeap) {
     // Flush the TLAB
-    heap->clear();
+    theCustomHeap->clear();
     // Release the assigned heap back to the pool
     getMainHoardHeap()->releaseHeap();
+    // Free the heap structure
+    getMainHoardHeap()->free(theCustomHeap);
+    theCustomHeap = nullptr;
   }
 }
 

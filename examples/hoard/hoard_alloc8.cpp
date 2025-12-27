@@ -33,9 +33,12 @@ Hoard::HoardHeapType * getMainHoardHeap() {
   return th;
 }
 
-// Forward declaration - implemented in mactls.cpp or unixtls.cpp
-TheCustomHeapType * getCustomHeap();
-extern bool isCustomHeapInitialized();
+// Direct access to thread-local heap for fast path (defined in hoard_thread_hooks.cpp)
+extern __thread TheCustomHeapType* theCustomHeap;
+extern bool initializedTSD;
+
+// Slow path - implemented in hoard_thread_hooks.cpp
+TheCustomHeapType* getCustomHeap();
 
 // Init buffer for early allocations (before TLS is ready)
 enum { MAX_LOCAL_BUFFER_SIZE = 256 * 131072 };
@@ -53,15 +56,21 @@ static char * initBufferPtr = initBuffer;
 extern "C" {
 
 ALLOC8_EXPORT void* xxmalloc(size_t sz) {
-  if (isCustomHeapInitialized()) {
-    void* ptr = getCustomHeap()->malloc(sz);
-    if (ptr == nullptr) {
-      fprintf(stderr, "Hoard: INTERNAL FAILURE.\n");
-      abort();
+  // Fast path: direct TLS access
+  if (__builtin_expect(theCustomHeap != nullptr, 1)) {
+    void* ptr = theCustomHeap->malloc(sz);
+    if (__builtin_expect(ptr != nullptr, 1)) {
+      return ptr;
     }
-    return ptr;
+    fprintf(stderr, "Hoard: INTERNAL FAILURE.\n");
+    abort();
   }
-  // Satisfy request from init buffer before TLS is ready
+  // Slow path: TLS not initialized yet
+  if (initializedTSD) {
+    // TLS initialized but heap not set for this thread - use getCustomHeap()
+    return getCustomHeap()->malloc(sz);
+  }
+  // Very early: satisfy request from init buffer before TLS is ready
   void* ptr = initBufferPtr;
   initBufferPtr += sz;
   if (initBufferPtr > initBuffer + MAX_LOCAL_BUFFER_SIZE) {
@@ -71,10 +80,16 @@ ALLOC8_EXPORT void* xxmalloc(size_t sz) {
 }
 
 ALLOC8_EXPORT void xxfree(void* ptr) {
+  // Fast path: direct TLS access
+  if (__builtin_expect(theCustomHeap != nullptr, 1)) {
+    theCustomHeap->free(ptr);
+    return;
+  }
   // Don't free init buffer allocations
   if (ptr >= initBuffer && ptr < initBuffer + MAX_LOCAL_BUFFER_SIZE) {
     return;
   }
+  // Slow path
   getCustomHeap()->free(ptr);
 }
 

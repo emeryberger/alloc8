@@ -66,6 +66,13 @@ GLIBC_2.2.5 {
     xxmalloc_lock;
     xxmalloc_unlock;
 
+    # Thread lifecycle hooks (optional, for thread-aware allocators)
+    pthread_create;
+    pthread_exit;
+    xxthread_init;
+    xxthread_cleanup;
+    xxthread_created_flag;
+
   local:
     *;
 };
