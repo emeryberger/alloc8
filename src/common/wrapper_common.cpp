@@ -4,6 +4,7 @@
 #include <alloc8/alloc8.h>
 #include <cstring>
 #include <cstdlib>
+#include <cstdint>
 #include <cerrno>
 
 // Forward declarations

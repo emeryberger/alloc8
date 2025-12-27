@@ -85,6 +85,11 @@ if(ALLOC8_PLATFORM_LINUX)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/linux/gnu_wrapper.cpp
     CACHE INTERNAL "Platform interpose sources"
   )
+  # Optional thread lifecycle hooks - allocators can include this for pthread interposition
+  set(ALLOC8_THREAD_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/linux/linux_threads.cpp
+    CACHE INTERNAL "Optional thread interposition sources"
+  )
   set(ALLOC8_VERSION_SCRIPT
     ${CMAKE_CURRENT_BINARY_DIR}/version_script.map
     CACHE INTERNAL "Version script path"

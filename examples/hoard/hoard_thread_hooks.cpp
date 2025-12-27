@@ -14,9 +14,8 @@
 // Hoard's own pthread interposition (in mactls.cpp) conflicts with early
 // library initialization.
 
-#if !defined(__APPLE__)
-// For now, this is macOS only. Linux would use a similar approach.
-#error "This file is currently for macOS only"
+#if !defined(__APPLE__) && !defined(__linux__)
+#error "This file is for macOS and Linux only"
 #endif
 
 #include <pthread.h>

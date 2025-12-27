@@ -20,6 +20,9 @@ ctest --test-dir build
 
 # Test interposition (macOS)
 DYLD_INSERT_LIBRARIES=build/examples/simple_heap/libsimple_heap.dylib ./build/tests/test_basic_alloc
+
+# Test interposition (Linux)
+LD_PRELOAD=build/examples/simple_heap/libsimple_heap.so ./build/tests/test_basic_alloc
 ```
 
 ## Building DieHard/Hoard Examples
@@ -27,16 +30,22 @@ DYLD_INSERT_LIBRARIES=build/examples/simple_heap/libsimple_heap.dylib ./build/te
 Dependencies are automatically fetched via CMake FetchContent.
 
 ```bash
-# DieHard example (working)
+# DieHard example (working on Linux and macOS)
 cmake -B build -DALLOC8_BUILD_EXAMPLES=ON -DALLOC8_BUILD_DIEHARD_EXAMPLE=ON
 cmake --build build
 
-# Test DieHard
+# Test DieHard (Linux)
+LD_PRELOAD=build/examples/diehard/libdiehard_alloc8.so ./test_program
+
+# Test DieHard (macOS)
 DYLD_INSERT_LIBRARIES=build/examples/diehard/libdiehard_alloc8.dylib ./test_program
 
-# Hoard example (has macOS init timing issues)
+# Hoard example (working on Linux, has macOS init timing issues)
 cmake -B build -DALLOC8_BUILD_EXAMPLES=ON -DALLOC8_BUILD_HOARD_EXAMPLE=ON
 cmake --build build
+
+# Test Hoard (Linux)
+LD_PRELOAD=build/examples/hoard/libhoard_alloc8.so ./test_program
 ```
 
 ## Architecture
@@ -80,6 +89,8 @@ The bridge between platform wrappers and user allocators:
 - Uses version script (`version_script.map`) for GLIBC symbol versioning
 - Requires `-Bsymbolic` linker flag to avoid infinite recursion
 - Compiler flags: `-fno-builtin-malloc`, `-fno-builtin-free`, etc.
+- Thread hooks (`linux_threads.cpp`) use strong symbol aliasing for pthread_create/pthread_exit
+- Requires clang or GCC 10+ for C++20 support (default GCC 7.x on Amazon Linux 2 doesn't work)
 
 ### Windows Specifics
 - Microsoft Detours fetched via CMake FetchContent
@@ -104,14 +115,14 @@ The bridge between platform wrappers and user allocators:
 **Problem:** ObjC runtime crashes with "corrupt data pointer" when `malloc_size` returns 0.
 **Solution:** Always return a valid size for allocated pointers, including init buffer allocations.
 
-### 5. Hoard Init Buffer Timing
+### 5. Hoard Init Buffer Timing (macOS only)
 **Problem:** Hoard uses an init buffer for allocations before TLS is ready. Complex interaction with alloc8.
-**Solution:** The Hoard example demonstrates the pattern but has unresolved macOS timing issues. DieHard (simpler singleton pattern) works correctly.
+**Solution:** The Hoard example works correctly on Linux but has unresolved macOS timing issues. DieHard (simpler singleton pattern) works on both platforms.
 
-### 6. Works in Debugger but Crashes Otherwise
+### 6. Works in Debugger but Crashes Otherwise (macOS only)
 **Problem:** SIGBUS (exit code 138) outside debugger, works under lldb.
 **Cause:** Timing-dependent initialization race condition.
-**Status:** Known issue with Hoard example on macOS.
+**Status:** Known issue with Hoard example on macOS. Works fine on Linux.
 
 ## Integration Patterns
 
@@ -173,7 +184,8 @@ LD_PRELOAD=./libmyalloc.so ./test
 
 When building an allocator library with alloc8:
 - `${ALLOC8_INTERPOSE_SOURCES}` - Platform-specific interposition source files
-- `${ALLOC8_COMMON_SOURCES}` - Common wrapper object files (calloc, realloc, etc.)
+- `${ALLOC8_THREAD_SOURCES}` - Optional thread lifecycle hooks (for thread-aware allocators)
+- `${ALLOC8_COMMON_SOURCES}` - Common wrapper object files (calloc, realloc, etc.) - Note: not needed on Linux as gnu_wrapper.cpp includes everything
 - `alloc8::interpose` - Link target with proper flags and dependencies
 - `alloc8::headers` - Header-only interface
 
@@ -192,19 +204,25 @@ alloc8/
 ├── include/alloc8/          # Public headers
 │   ├── alloc8.h             # Main header + ALLOC8_REDIRECT
 │   ├── allocator_traits.h   # HeapRedirect<T> template
-│   └── platform.h           # Platform detection macros
+│   ├── platform.h           # Platform detection macros
+│   └── thread_hooks.h       # Thread lifecycle hooks interface
 ├── src/
 │   ├── common/              # Shared wrapper implementations
 │   │   ├── wrapper_common.cpp
-│   │   └── new_delete.cpp
+│   │   ├── new_delete.cpp
+│   │   └── new_delete.inc   # Included by platform wrappers
 │   └── platform/
-│       ├── linux/gnu_wrapper.cpp
-│       ├── macos/mac_wrapper.cpp  # Includes mac_zones.cpp
+│       ├── linux/
+│       │   ├── gnu_wrapper.cpp     # Main Linux interposition
+│       │   └── linux_threads.cpp   # Thread lifecycle hooks
+│       ├── macos/
+│       │   ├── mac_wrapper.cpp     # Includes mac_zones.cpp
+│       │   └── mac_threads.cpp     # Thread lifecycle hooks
 │       └── windows/win_wrapper_detours.cpp
 ├── examples/
 │   ├── simple_heap/         # Basic example with statistics
 │   ├── diehard/             # DieHard integration (working)
-│   └── hoard/               # Hoard integration (WIP)
+│   └── hoard/               # Hoard integration (working on Linux)
 └── tests/
 ```
 

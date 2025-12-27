@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <malloc.h>
 #include <unistd.h>
 #include <dlfcn.h>

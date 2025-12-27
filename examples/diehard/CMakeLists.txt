@@ -31,11 +31,20 @@ if(NOT diehard_POPULATED)
 endif()
 
 # Build DieHard with alloc8
-add_library(diehard_alloc8 SHARED
-  diehard_alloc8.cpp
-  ${ALLOC8_INTERPOSE_SOURCES}
-  ${ALLOC8_COMMON_SOURCES}
-)
+# On Linux, gnu_wrapper.cpp includes new_delete.inc so COMMON_SOURCES not needed
+# On other platforms, we need COMMON_SOURCES for the implementations
+if(ALLOC8_PLATFORM_LINUX)
+  add_library(diehard_alloc8 SHARED
+    diehard_alloc8.cpp
+    ${ALLOC8_INTERPOSE_SOURCES}
+  )
+else()
+  add_library(diehard_alloc8 SHARED
+    diehard_alloc8.cpp
+    ${ALLOC8_INTERPOSE_SOURCES}
+    ${ALLOC8_COMMON_SOURCES}
+  )
+endif()
 
 target_include_directories(diehard_alloc8 PRIVATE
   ${diehard_SOURCE_DIR}/src/include

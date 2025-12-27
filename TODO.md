@@ -17,7 +17,7 @@ Status and plans for the alloc8 allocator interposition library.
 | C++17 aligned new/delete | Done | Done | Done |
 | malloc_zone_t support | N/A | Done | N/A |
 | Prefixed mode | Done | Done | Done |
-| Thread lifecycle hooks | Planned | Done | Planned |
+| Thread lifecycle hooks | Done | Done | Planned |
 
 ### Examples
 
@@ -31,10 +31,10 @@ Status and plans for the alloc8 allocator interposition library.
 
 ### High Priority
 
-- [ ] **Linux thread hooks** (`src/platform/linux/linux_threads.cpp`)
+- [x] **Linux thread hooks** (`src/platform/linux/linux_threads.cpp`)
   - Implement pthread_create/pthread_exit interposition for Linux
   - Pattern similar to macOS mac_threads.cpp
-  - Use `__attribute__((alias(...)))` or dlsym for interposition
+  - Uses dlsym(RTLD_NEXT) and strong symbol aliasing
 
 - [ ] **Windows thread hooks** (`src/platform/windows/win_threads.cpp`)
   - Hook CreateThread/ExitThread via Detours

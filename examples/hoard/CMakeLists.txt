@@ -34,13 +34,30 @@ endif()
 # Build Hoard with alloc8
 # Uses alloc8's thread lifecycle hooks (xxthread_init/xxthread_cleanup) for
 # proper thread-aware operation instead of Hoard's own pthread interposition.
-add_library(hoard_alloc8 SHARED
-  hoard_alloc8.cpp
-  hoard_thread_hooks.cpp
-  ${ALLOC8_INTERPOSE_SOURCES}
-  ${ALLOC8_THREAD_SOURCES}
-  ${ALLOC8_COMMON_SOURCES}
-)
+#
+# Supported on macOS and Linux (Windows not yet supported)
+if(NOT ALLOC8_PLATFORM_MACOS AND NOT ALLOC8_PLATFORM_LINUX)
+  message(STATUS "Skipping Hoard example - thread hooks not yet implemented for this platform")
+  return()
+endif()
+
+# On Linux, gnu_wrapper.cpp includes new_delete.inc so COMMON_SOURCES not needed
+if(ALLOC8_PLATFORM_LINUX)
+  add_library(hoard_alloc8 SHARED
+    hoard_alloc8.cpp
+    hoard_thread_hooks.cpp
+    ${ALLOC8_INTERPOSE_SOURCES}
+    ${ALLOC8_THREAD_SOURCES}
+  )
+else()
+  add_library(hoard_alloc8 SHARED
+    hoard_alloc8.cpp
+    hoard_thread_hooks.cpp
+    ${ALLOC8_INTERPOSE_SOURCES}
+    ${ALLOC8_THREAD_SOURCES}
+    ${ALLOC8_COMMON_SOURCES}
+  )
+endif()
 
 target_include_directories(hoard_alloc8 PRIVATE
   ${hoard_SOURCE_DIR}
