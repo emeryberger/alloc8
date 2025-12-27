@@ -155,21 +155,11 @@ DYLD_INSERT_LIBRARIES=./examples/simple_heap/libsimple_heap.dylib /bin/ls
 
 ### DieHard
 
-The `examples/diehard` directory shows how to integrate [DieHard](https://github.com/emeryberger/DieHard), a memory allocator that provides probabilistic memory safety.
-
-**Prerequisites:** Clone DieHard and Heap-Layers source trees:
-```bash
-git clone https://github.com/emeryberger/DieHard.git ~/git/DieHard
-git clone https://github.com/emeryberger/Heap-Layers.git ~/git/Heap-Layers
-```
+The `examples/diehard` directory shows how to integrate [DieHard](https://github.com/emeryberger/DieHard), a memory allocator that provides probabilistic memory safety. DieHard and Heap-Layers are automatically fetched via CMake FetchContent.
 
 **Build:**
 ```bash
-cmake .. \
-  -DALLOC8_BUILD_EXAMPLES=ON \
-  -DALLOC8_BUILD_DIEHARD_EXAMPLE=ON \
-  -DDIEHARD_SOURCE_DIR=~/git/DieHard \
-  -DHEAPLAYERS_SOURCE_DIR=~/git/Heap-Layers
+cmake .. -DALLOC8_BUILD_EXAMPLES=ON -DALLOC8_BUILD_DIEHARD_EXAMPLE=ON
 cmake --build .
 ```
 
@@ -184,21 +174,11 @@ DYLD_INSERT_LIBRARIES=./examples/diehard/libdiehard_alloc8.dylib ./my_program
 
 ### Hoard
 
-The `examples/hoard` directory shows how to integrate [Hoard](https://github.com/emeryberger/Hoard), a fast, scalable memory allocator.
-
-**Prerequisites:** Clone Hoard and Heap-Layers source trees:
-```bash
-git clone https://github.com/emeryberger/Hoard.git ~/git/Hoard
-git clone https://github.com/emeryberger/Heap-Layers.git ~/git/Heap-Layers
-```
+The `examples/hoard` directory shows how to integrate [Hoard](https://github.com/emeryberger/Hoard), a fast, scalable memory allocator. Hoard and Heap-Layers are automatically fetched via CMake FetchContent.
 
 **Build:**
 ```bash
-cmake .. \
-  -DALLOC8_BUILD_EXAMPLES=ON \
-  -DALLOC8_BUILD_HOARD_EXAMPLE=ON \
-  -DHOARD_SOURCE_DIR=~/git/Hoard \
-  -DHEAPLAYERS_SOURCE_DIR=~/git/Heap-Layers
+cmake .. -DALLOC8_BUILD_EXAMPLES=ON -DALLOC8_BUILD_HOARD_EXAMPLE=ON
 cmake --build .
 ```
 
@@ -214,14 +194,6 @@ cmake --build .
 | `ALLOC8_BUILD_DIEHARD_EXAMPLE` | OFF | Build DieHard integration example |
 | `ALLOC8_PREFIX` | "" | Prefix for prefixed mode (e.g., "hoard" → `hoard_malloc`) |
 | `ALLOC8_WINDOWS_USE_DETOURS` | ON | Use Microsoft Detours on Windows |
-
-### Source Directory Options (for examples)
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `HOARD_SOURCE_DIR` | `~/git/Hoard` | Path to Hoard source tree |
-| `DIEHARD_SOURCE_DIR` | `~/git/DieHard` | Path to DieHard source tree |
-| `HEAPLAYERS_SOURCE_DIR` | `~/git/Heap-Layers` | Path to Heap-Layers source tree |
 
 ## Platform Details
 

@@ -1,19 +1,33 @@
 # alloc8/examples/diehard/CMakeLists.txt
 # Example: DieHard allocator using alloc8 for interposition
 #
-# This example requires DieHard and Heap-Layers source trees.
-# Set DIEHARD_SOURCE_DIR and HEAPLAYERS_SOURCE_DIR if not using defaults.
+# Automatically fetches DieHard and Heap-Layers via FetchContent.
 
-# Allow user to specify source directories
-set(DIEHARD_SOURCE_DIR "$ENV{HOME}/git/DieHard" CACHE PATH "Path to DieHard source")
-set(HEAPLAYERS_SOURCE_DIR "$ENV{HOME}/git/Heap-Layers" CACHE PATH "Path to Heap-Layers source")
+include(FetchContent)
 
-if(NOT EXISTS "${DIEHARD_SOURCE_DIR}/src/include/diehardheap.h")
-  message(FATAL_ERROR "DieHard source not found at ${DIEHARD_SOURCE_DIR}. Set DIEHARD_SOURCE_DIR.")
-endif()
+# Fetch Heap-Layers
+FetchContent_Declare(
+  HeapLayers
+  GIT_REPOSITORY https://github.com/emeryberger/Heap-Layers.git
+  GIT_TAG        master
+  GIT_SHALLOW    TRUE
+)
 
-if(NOT EXISTS "${HEAPLAYERS_SOURCE_DIR}/heaplayers.h")
-  message(FATAL_ERROR "Heap-Layers source not found at ${HEAPLAYERS_SOURCE_DIR}. Set HEAPLAYERS_SOURCE_DIR.")
+# Fetch DieHard
+FetchContent_Declare(
+  DieHard
+  GIT_REPOSITORY https://github.com/emeryberger/DieHard.git
+  GIT_TAG        master
+  GIT_SHALLOW    TRUE
+)
+
+# Make Heap-Layers available first (DieHard depends on it)
+FetchContent_MakeAvailable(HeapLayers)
+
+# Get DieHard source without building it
+FetchContent_GetProperties(DieHard)
+if(NOT diehard_POPULATED)
+  FetchContent_Populate(DieHard)
 endif()
 
 # Build DieHard with alloc8
@@ -24,13 +38,13 @@ add_library(diehard_alloc8 SHARED
 )
 
 target_include_directories(diehard_alloc8 PRIVATE
-  ${DIEHARD_SOURCE_DIR}/src/include
-  ${DIEHARD_SOURCE_DIR}/src/include/layers
-  ${DIEHARD_SOURCE_DIR}/src/include/math
-  ${DIEHARD_SOURCE_DIR}/src/include/rng
-  ${DIEHARD_SOURCE_DIR}/src/include/static
-  ${DIEHARD_SOURCE_DIR}/src/include/util
-  ${HEAPLAYERS_SOURCE_DIR}
+  ${diehard_SOURCE_DIR}/src/include
+  ${diehard_SOURCE_DIR}/src/include/layers
+  ${diehard_SOURCE_DIR}/src/include/math
+  ${diehard_SOURCE_DIR}/src/include/rng
+  ${diehard_SOURCE_DIR}/src/include/static
+  ${diehard_SOURCE_DIR}/src/include/util
+  ${heaplayers_SOURCE_DIR}
 )
 
 target_compile_definitions(diehard_alloc8 PRIVATE
