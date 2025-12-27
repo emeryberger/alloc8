@@ -113,6 +113,11 @@ elseif(ALLOC8_PLATFORM_MACOS)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/mac_wrapper.cpp
     CACHE INTERNAL "Platform interpose sources"
   )
+  # Optional thread lifecycle hooks - allocators can include this for pthread interposition
+  set(ALLOC8_THREAD_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/mac_threads.cpp
+    CACHE INTERNAL "Optional thread interposition sources"
+  )
   set(ALLOC8_COMMON_SOURCES
     $<TARGET_OBJECTS:alloc8_common>
     CACHE INTERNAL "Common wrapper object files"

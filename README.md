@@ -110,6 +110,63 @@ target_link_libraries(myalloc_api PRIVATE alloc8::prefixed)
 
 This generates `myalloc_malloc()`, `myalloc_free()`, etc.
 
+## Thread-Aware Allocators (Optional)
+
+High-performance allocators like Hoard use per-thread heaps (TLABs) to reduce contention. alloc8 provides optional pthread interposition to support these allocators with proper initialization ordering.
+
+### Thread Lifecycle Hooks
+
+Implement these optional hooks to be notified of thread creation/destruction:
+
+```cpp
+extern "C" {
+  // Called when a new thread starts (before user's thread function)
+  void xxthread_init(void) {
+    // Initialize per-thread heap structures (TLABs)
+    // Assign thread to a heap from the thread pool
+  }
+
+  // Called when a thread is about to exit
+  void xxthread_cleanup(void) {
+    // Flush thread-local allocation buffers
+    // Return per-thread heap to the pool
+  }
+
+  // Optional: Flag for single-threaded lock optimization
+  // If provided, alloc8 sets this to 1 when first thread is created
+  volatile int xxthread_created_flag;
+}
+```
+
+### CMake Integration
+
+Include `${ALLOC8_THREAD_SOURCES}` in your library:
+
+```cmake
+add_library(myalloc SHARED
+  my_allocator.cpp
+  ${ALLOC8_INTERPOSE_SOURCES}
+  ${ALLOC8_THREAD_SOURCES}  # Enables pthread interposition
+  ${ALLOC8_COMMON_SOURCES}
+)
+```
+
+### How It Works
+
+1. alloc8 interposes `pthread_create` and `pthread_exit`
+2. When a thread is created, alloc8 wraps the thread function
+3. `xxthread_init()` is called in the new thread before the user function runs
+4. `xxthread_cleanup()` is called when the thread exits
+5. Weak symbol detection: if hooks aren't provided, pthread calls pass through with zero overhead
+
+### Benefits
+
+- **Proper Initialization Ordering**: alloc8 ensures pthread hooks activate after malloc is fully ready, avoiding crashes during early library initialization
+- **Platform Abstraction**: Allocators don't need platform-specific pthread interposition code
+- **Zero Overhead When Unused**: If you don't provide hooks, pthread calls pass through directly
+
+See the Hoard example for a complete implementation using thread hooks.
+
 ## Allocator Requirements
 
 Your allocator class must implement:
@@ -182,7 +239,14 @@ cmake .. -DALLOC8_BUILD_EXAMPLES=ON -DALLOC8_BUILD_HOARD_EXAMPLE=ON
 cmake --build .
 ```
 
-**Note:** The Hoard example currently has initialization timing issues on macOS. The DieHard example demonstrates the same integration pattern and works correctly.
+**Use:**
+```bash
+# Linux
+LD_PRELOAD=./examples/hoard/libhoard_alloc8.so ./my_program
+
+# macOS
+DYLD_INSERT_LIBRARIES=./examples/hoard/libhoard_alloc8.dylib ./my_program
+```
 
 ## CMake Options
 

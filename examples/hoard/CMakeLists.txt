@@ -1,10 +1,7 @@
 # alloc8/examples/hoard/CMakeLists.txt
 # Example: Hoard allocator using alloc8 for interposition
 #
-# NOTE: This example demonstrates the integration pattern but has known
-# initialization timing issues on macOS that need further investigation.
-# The DieHard example works correctly and demonstrates the same pattern.
-#
+# Demonstrates alloc8's thread lifecycle hooks for thread-aware allocators.
 # Automatically fetches Hoard and Heap-Layers via FetchContent.
 
 include(FetchContent)
@@ -35,16 +32,13 @@ if(NOT hoard_POPULATED)
 endif()
 
 # Build Hoard with alloc8
-if(APPLE)
-  set(HOARD_TLS_SOURCE ${hoard_SOURCE_DIR}/src/source/mactls.cpp)
-else()
-  set(HOARD_TLS_SOURCE ${hoard_SOURCE_DIR}/src/source/unixtls.cpp)
-endif()
-
+# Uses alloc8's thread lifecycle hooks (xxthread_init/xxthread_cleanup) for
+# proper thread-aware operation instead of Hoard's own pthread interposition.
 add_library(hoard_alloc8 SHARED
   hoard_alloc8.cpp
-  ${HOARD_TLS_SOURCE}
+  hoard_thread_hooks.cpp
   ${ALLOC8_INTERPOSE_SOURCES}
+  ${ALLOC8_THREAD_SOURCES}
   ${ALLOC8_COMMON_SOURCES}
 )
 
