@@ -33,26 +33,37 @@ FetchContent_MakeAvailable(alloc8)
 ```cpp
 // my_allocator.cpp
 #include <alloc8/alloc8.h>
+#include <sys/mman.h>  // mmap/munmap
 
 class MyHeap {
 public:
   void* malloc(size_t sz) {
-    // Your allocation logic
-    return std::malloc(sz);
+    // IMPORTANT: Do NOT call malloc/free here - use mmap or your own logic.
+    // Calling malloc would cause infinite recursion under LD_PRELOAD.
+    size_t total = sz + sizeof(size_t);
+    void* p = mmap(nullptr, total, PROT_READ|PROT_WRITE,
+                   MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+    if (p == MAP_FAILED) return nullptr;
+    *(size_t*)p = total;  // store size for free/getSize
+    return (char*)p + sizeof(size_t);
   }
 
   void free(void* ptr) {
-    std::free(ptr);
+    if (!ptr) return;
+    void* base = (char*)ptr - sizeof(size_t);
+    size_t total = *(size_t*)base;
+    munmap(base, total);
   }
 
   void* memalign(size_t alignment, size_t sz) {
-    void* ptr = nullptr;
-    posix_memalign(&ptr, alignment, sz);
-    return ptr;
+    // Simplified: mmap returns page-aligned memory
+    return malloc(sz);
   }
 
   size_t getSize(void* ptr) {
-    return malloc_usable_size(ptr);
+    if (!ptr) return 0;
+    void* base = (char*)ptr - sizeof(size_t);
+    return *(size_t*)base - sizeof(size_t);
   }
 
   void lock() { /* for fork safety */ }
