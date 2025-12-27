@@ -20,6 +20,29 @@ ctest --test-dir build
 DYLD_INSERT_LIBRARIES=build/examples/simple_heap/libsimple_heap.dylib ./build/tests/test_basic_alloc
 ```
 
+## Building DieHard/Hoard Examples
+
+```bash
+# DieHard example (working)
+cmake -B build \
+  -DALLOC8_BUILD_EXAMPLES=ON \
+  -DALLOC8_BUILD_DIEHARD_EXAMPLE=ON \
+  -DDIEHARD_SOURCE_DIR=~/git/DieHard \
+  -DHEAPLAYERS_SOURCE_DIR=~/git/Heap-Layers
+cmake --build build
+
+# Test DieHard
+DYLD_INSERT_LIBRARIES=build/examples/diehard/libdiehard_alloc8.dylib ./test_program
+
+# Hoard example (has macOS init timing issues)
+cmake -B build \
+  -DALLOC8_BUILD_EXAMPLES=ON \
+  -DALLOC8_BUILD_HOARD_EXAMPLE=ON \
+  -DHOARD_SOURCE_DIR=~/git/Hoard \
+  -DHEAPLAYERS_SOURCE_DIR=~/git/Heap-Layers
+cmake --build build
+```
+
 ## Architecture
 
 ### Key Components
