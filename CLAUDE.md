@@ -17,8 +17,7 @@ cmake --build build
 ctest --test-dir build
 
 # Test interposition (macOS)
-DYLD_INSERT_LIBRARIES=build/examples/simple_heap/libsimple_heap.dylib \
-  DYLD_FORCE_FLAT_NAMESPACE=1 ./build/tests/test_basic_alloc
+DYLD_INSERT_LIBRARIES=build/examples/simple_heap/libsimple_heap.dylib ./build/tests/test_basic_alloc
 ```
 
 ## Architecture
@@ -51,8 +50,8 @@ The bridge between platform wrappers and user allocators:
 ### macOS Specifics
 - `mac_zones.cpp` is `#included` by `mac_wrapper.cpp`, not compiled separately
 - macOS does NOT have `memalign()` - only `posix_memalign()`
-- Requires `DYLD_FORCE_FLAT_NAMESPACE=1` for full interposition
 - ARM64 macOS uses 16KB pages (`ALLOC8_PAGE_SIZE`)
+- Full malloc_zone_t implementation enables interposition without DYLD_FORCE_FLAT_NAMESPACE
 
 ### Linux Specifics
 - Uses version script (`version_script.map`) for GLIBC symbol versioning
@@ -78,8 +77,7 @@ The bridge between platform wrappers and user allocators:
 ./build/tests/test_basic_alloc
 
 # Interposition test (macOS)
-DYLD_INSERT_LIBRARIES=./build/examples/simple_heap/libsimple_heap.dylib \
-  DYLD_FORCE_FLAT_NAMESPACE=1 ./build/test_interpose
+DYLD_INSERT_LIBRARIES=./build/examples/simple_heap/libsimple_heap.dylib ./build/test_interpose
 ```
 
 ## Code Style

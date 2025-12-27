@@ -92,8 +92,8 @@ target_link_libraries(myalloc PRIVATE alloc8::interpose)
 # Linux
 LD_PRELOAD=./libmyalloc.so ./my_program
 
-# macOS (DYLD_FORCE_FLAT_NAMESPACE required for full interposition)
-DYLD_INSERT_LIBRARIES=./libmyalloc.dylib DYLD_FORCE_FLAT_NAMESPACE=1 ./my_program
+# macOS
+DYLD_INSERT_LIBRARIES=./libmyalloc.dylib ./my_program
 ```
 
 ## Prefixed Mode
@@ -141,11 +141,9 @@ ctest
 The `examples/simple_heap` directory contains a complete example allocator that wraps system malloc with statistics tracking:
 
 ```bash
-# Build and test
+# Build and test (macOS example)
 cd build
-DYLD_INSERT_LIBRARIES=./examples/simple_heap/libsimple_heap.dylib \
-  DYLD_FORCE_FLAT_NAMESPACE=1 \
-  /bin/ls
+DYLD_INSERT_LIBRARIES=./examples/simple_heap/libsimple_heap.dylib /bin/ls
 
 # Output at exit:
 # === SimpleHeap Statistics ===
