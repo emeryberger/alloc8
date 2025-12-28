@@ -18,13 +18,15 @@ Status and plans for the alloc8 allocator interposition library.
 | malloc_zone_t support | N/A | Done | N/A |
 | Prefixed mode | Done | Done | Done |
 | Thread lifecycle hooks | Done | Done | Planned |
+| ThreadRedirect template | Done | Done | Done |
+| Header-only gnu_wrapper.h | Done | N/A | N/A |
 
 ### Examples
 
 | Example | Status | Notes |
 |---------|--------|-------|
 | simple_heap | Working | Basic mmap-based allocator with stats |
-| DieHard | Working | Memory safety allocator |
+| DieHard | Working | Zero-overhead with gnu_wrapper.h + LTO |
 | Hoard | Working | Uses alloc8 thread hooks for TLAB support |
 
 ## Roadmap
@@ -35,6 +37,17 @@ Status and plans for the alloc8 allocator interposition library.
   - Implement pthread_create/pthread_exit interposition for Linux
   - Pattern similar to macOS mac_threads.cpp
   - Uses dlsym(RTLD_NEXT) and strong symbol aliasing
+
+- [x] **ThreadRedirect template** (`include/alloc8/allocator_traits.h`)
+  - Add `ThreadRedirect<T>` template mirroring `HeapRedirect<T>`
+  - Add `ALLOC8_THREAD_REDIRECT` macro
+  - Add `ALLOC8_REDIRECT_WITH_THREADS` combined macro
+  - Add `ThreadAwareAllocator` concept
+
+- [x] **Header-only gnu_wrapper.h** (`include/alloc8/gnu_wrapper.h`)
+  - Zero-overhead Linux interposition via getCustomHeap() pattern
+  - Enables full inlining with LTO
+  - Used by DieHard example for parity with original
 
 - [ ] **Windows thread hooks** (`src/platform/windows/win_threads.cpp`)
   - Hook CreateThread/ExitThread via Detours

@@ -51,45 +51,60 @@ LD_PRELOAD=build/examples/hoard/libhoard_alloc8.so ./test_program
 
 ### DieHard Zero-Overhead Build
 
-The DieHard example achieves **zero overhead** compared to the original DieHard by:
+The DieHard example achieves **near-zero overhead** (~10% single-threaded, within variance multi-threaded) compared to the original DieHard by:
 
-1. **Using Heap-Layers wrappers directly** - Includes `gnuwrapper.cpp` which calls `getCustomHeap()` directly, bypassing the `xxmalloc` indirection
-2. **Full LTO with GCC 11+** - Uses `-flto=auto` and `-fno-fat-lto-objects` for aggressive inlining
-3. **C++23 standard** - Enables latest optimizations
-4. **Identical architecture** - Uses the same Meyers singleton pattern as original DieHard
+1. **Using alloc8's gnu_wrapper.h** - Header-only wrapper that calls `getCustomHeap()` directly, enabling full inlining with LTO
+2. **CMake IPO support** - Uses `INTERPROCEDURAL_OPTIMIZATION` for cross-unit inlining
+3. **Version script** - Proper symbol visibility for optimal linker optimization
+4. **C++23 standard** - Enables latest optimizations
 
-The `xxmalloc` interface is still provided for compatibility (fork handlers, etc.) but the hot path goes directly through `getCustomHeap()`.
-
-Performance comparison (threadtest, 1 thread, 10000 iterations):
-- alloc8 DieHard: ~0.35s
-- Original DieHard: ~0.35s (within variance)
+Performance comparison (threadtest, 8 threads, 1000 iterations, 8000 objects):
+- alloc8 DieHard: ~0.32s
+- Original DieHard: ~0.32s (within variance)
 
 ## Architecture
 
 ### Key Components
 
-1. **`include/alloc8/alloc8.h`** - Main header with `ALLOC8_REDIRECT` macro
-2. **`include/alloc8/allocator_traits.h`** - `HeapRedirect<T>` template and `Allocator` concept
+1. **`include/alloc8/alloc8.h`** - Main header with `ALLOC8_REDIRECT`, `ALLOC8_THREAD_REDIRECT`, and `ALLOC8_REDIRECT_WITH_THREADS` macros
+2. **`include/alloc8/allocator_traits.h`** - `HeapRedirect<T>` and `ThreadRedirect<T>` templates, `Allocator` and `ThreadAwareAllocator` concepts
 3. **`include/alloc8/platform.h`** - Platform detection and compiler attribute macros
+4. **`include/alloc8/thread_hooks.h`** - Thread lifecycle hooks interface documentation
+5. **`include/alloc8/gnu_wrapper.h`** - Header-only Linux wrapper for zero-overhead interposition (advanced)
 
 ### Platform Wrappers
 
 | Platform | File | Mechanism |
 |----------|------|-----------|
 | Linux | `src/platform/linux/gnu_wrapper.cpp` | Strong symbol aliasing |
+| Linux | `include/alloc8/gnu_wrapper.h` | Header-only (zero-overhead) |
 | macOS | `src/platform/macos/mac_wrapper.cpp` | `__DATA,__interpose` section |
 | Windows | `src/platform/windows/win_wrapper_detours.cpp` | Microsoft Detours |
+
+### Thread Interposition
+
+| Platform | File | Mechanism |
+|----------|------|-----------|
+| Linux | `src/platform/linux/linux_threads.cpp` | Strong symbol aliasing for pthread_create/pthread_exit |
+| macOS | `src/platform/macos/mac_threads.cpp` | Interpose pthread functions |
 
 ### xxmalloc Interface
 
 The bridge between platform wrappers and user allocators:
-- `xxmalloc(size_t)` - Called by platform wrappers
+- `xxmalloc(size_t)` - Allocate memory
 - `xxfree(void*)` - Free memory
 - `xxmemalign(size_t, size_t)` - Aligned allocation
 - `xxmalloc_usable_size(void*)` - Get allocation size
 - `xxmalloc_lock()` / `xxmalloc_unlock()` - Fork safety
 - `xxrealloc(void*, size_t)` - Reallocation
 - `xxcalloc(size_t, size_t)` - Zeroed allocation
+
+### xxthread Interface (Optional)
+
+For thread-aware allocators:
+- `xxthread_init()` - Called when a new thread starts
+- `xxthread_cleanup()` - Called when a thread exits
+- `xxthread_created_flag` - Set when first thread is created (for lock optimization)
 
 ## Important Implementation Details
 
@@ -107,6 +122,7 @@ The bridge between platform wrappers and user allocators:
 - Compiler flags: `-fno-builtin-malloc`, `-fno-builtin-free`, etc.
 - Thread hooks (`linux_threads.cpp`) use strong symbol aliasing for pthread_create/pthread_exit
 - Requires clang or GCC 10+ for C++20 support (default GCC 7.x on Amazon Linux 2 doesn't work)
+- For zero-overhead: Use `gnu_wrapper.h` with GCC 11+ and full LTO
 
 ### Windows Specifics
 - Microsoft Detours fetched via CMake FetchContent
@@ -143,23 +159,42 @@ The bridge between platform wrappers and user allocators:
 ## Integration Patterns
 
 ### Pattern 1: HeapRedirect (Recommended for Simple Heaps)
+
+Use the `HeapRedirect` template and `ALLOC8_REDIRECT` macro for simple allocators.
+
 ```cpp
+#include <alloc8/alloc8.h>
+
 class MyHeap {
 public:
   void* malloc(size_t sz);
   void free(void* ptr);
   void* memalign(size_t align, size_t sz);
   size_t getSize(void* ptr);
-  void lock();
-  void unlock();
+  void lock();    // For fork safety
+  void unlock();  // For fork safety
 };
 
 using MyRedirect = alloc8::HeapRedirect<MyHeap>;
 ALLOC8_REDIRECT(MyRedirect);
 ```
 
+CMake:
+```cmake
+add_library(myalloc SHARED
+  my_allocator.cpp
+  ${ALLOC8_INTERPOSE_SOURCES}
+)
+target_link_libraries(myalloc PRIVATE alloc8::interpose)
+```
+
 ### Pattern 2: HeapRedirect with Thread Hooks (For Per-Thread State)
+
+For allocators that need per-thread state (TLABs, thread-local caches), add thread hooks.
+
 ```cpp
+#include <alloc8/alloc8.h>
+
 class MyThreadAwareHeap {
 public:
   // Heap operations (required)
@@ -178,13 +213,13 @@ public:
 using MyRedirect = alloc8::HeapRedirect<MyThreadAwareHeap>;
 ALLOC8_REDIRECT_WITH_THREADS(MyRedirect);
 
-// Or separately:
+// Or use separate macros for more control:
 // ALLOC8_REDIRECT(MyRedirect);
 // using MyThreads = alloc8::ThreadRedirect<MyThreadAwareHeap>;
 // ALLOC8_THREAD_REDIRECT(MyThreads);
 ```
 
-CMake setup for thread-aware allocators:
+CMake:
 ```cmake
 add_library(myalloc SHARED
   my_allocator.cpp
@@ -194,9 +229,13 @@ add_library(myalloc SHARED
 target_link_libraries(myalloc PRIVATE alloc8::interpose)
 ```
 
-### Pattern 3: Direct xxmalloc (For Complex Heaps like Hoard)
+### Pattern 3: Direct xxmalloc (For Complex Heaps)
+
+For complex allocators like Hoard that need full control, implement the xxmalloc functions directly.
+
 ```cpp
-// Implement xxmalloc functions directly
+#include <alloc8/platform.h>
+
 extern "C" {
   ALLOC8_EXPORT void* xxmalloc(size_t sz) { ... }
   ALLOC8_EXPORT void xxfree(void* ptr) { ... }
@@ -211,6 +250,54 @@ extern "C" {
   ALLOC8_EXPORT void xxthread_init() { ... }
   ALLOC8_EXPORT void xxthread_cleanup() { ... }
 }
+```
+
+### Pattern 4: Header-Only gnu_wrapper.h (For Zero-Overhead on Linux)
+
+For maximum performance on Linux, use the header-only `gnu_wrapper.h` which calls `getCustomHeap()` directly, enabling full inlining with LTO.
+
+```cpp
+// my_allocator.cpp
+#include "heaplayers.h"  // or your heap implementation
+
+// Define your heap type
+class TheCustomHeapType : public MyHeapImplementation {
+public:
+  void* memalign(size_t alignment, size_t sz) { ... }
+  void lock() { ... }
+  void unlock() { ... }
+};
+
+// Provide the getCustomHeap() singleton (Meyers singleton pattern)
+inline static TheCustomHeapType* getCustomHeap() {
+  static char buf[sizeof(TheCustomHeapType)];
+  static TheCustomHeapType* heap = new (buf) TheCustomHeapType;
+  return heap;
+}
+
+// Include alloc8's header-only wrapper
+#include <alloc8/gnu_wrapper.h>
+```
+
+CMake (requires GCC 11+ and IPO for best results):
+```cmake
+add_library(myalloc SHARED my_allocator.cpp)
+target_include_directories(myalloc PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
+# Enable IPO/LTO
+include(CheckIPOSupported)
+check_ipo_supported(RESULT ipo_supported)
+if(ipo_supported)
+  set_target_properties(myalloc PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+endif()
+
+target_compile_options(myalloc PRIVATE
+  -fvisibility=hidden
+  -fno-builtin-malloc -fno-builtin-free
+  -fno-builtin-realloc -fno-builtin-calloc
+)
+
+target_link_libraries(myalloc PRIVATE pthread dl)
 ```
 
 ## Testing Interposition
@@ -240,8 +327,8 @@ LD_PRELOAD=./libmyalloc.so ./test
 
 When building an allocator library with alloc8:
 - `${ALLOC8_INTERPOSE_SOURCES}` - Platform-specific interposition source files
-- `${ALLOC8_THREAD_SOURCES}` - Optional thread lifecycle hooks (for thread-aware allocators)
-- `${ALLOC8_COMMON_SOURCES}` - Common wrapper object files (calloc, realloc, etc.) - Note: not needed on Linux as gnu_wrapper.cpp includes everything
+- `${ALLOC8_THREAD_SOURCES}` - Thread lifecycle hooks (for thread-aware allocators)
+- `${ALLOC8_COMMON_SOURCES}` - Common wrapper implementations (not needed on Linux)
 - `alloc8::interpose` - Link target with proper flags and dependencies
 - `alloc8::headers` - Header-only interface
 
@@ -258,10 +345,11 @@ When building an allocator library with alloc8:
 ```
 alloc8/
 ├── include/alloc8/          # Public headers
-│   ├── alloc8.h             # Main header + ALLOC8_REDIRECT
-│   ├── allocator_traits.h   # HeapRedirect<T> template
+│   ├── alloc8.h             # Main header + ALLOC8_REDIRECT macros
+│   ├── allocator_traits.h   # HeapRedirect<T>, ThreadRedirect<T> templates
 │   ├── platform.h           # Platform detection macros
-│   └── thread_hooks.h       # Thread lifecycle hooks interface
+│   ├── thread_hooks.h       # Thread lifecycle hooks documentation
+│   └── gnu_wrapper.h        # Header-only Linux wrapper (zero-overhead)
 ├── src/
 │   ├── common/              # Shared wrapper implementations
 │   │   ├── wrapper_common.cpp
@@ -284,19 +372,61 @@ alloc8/
 
 ## Debugging Tips
 
-1. **Check interpose section exists:**
+1. **Check interpose section exists (macOS):**
    ```bash
    otool -l libmyalloc.dylib | grep -A5 "__interpose"
    ```
 
 2. **Check exported symbols:**
    ```bash
+   # macOS
    nm -gU libmyalloc.dylib | grep malloc
+   # Linux
+   nm -D libmyalloc.so | grep malloc
    ```
 
-3. **Debug with lldb:**
+3. **Debug with lldb/gdb:**
    ```bash
+   # macOS
    DYLD_INSERT_LIBRARIES=./libmyalloc.dylib lldb ./test
+   # Linux
+   LD_PRELOAD=./libmyalloc.so gdb ./test
    ```
 
-4. **If works in debugger but not standalone:** Likely initialization timing issue.
+4. **Check if getCustomHeap is inlined (Linux with LTO):**
+   ```bash
+   nm -C libmyalloc.so | grep getCustomHeap
+   # If fully inlined, only the guard variable should appear
+   ```
+
+5. **If works in debugger but not standalone:** Likely initialization timing issue.
+
+## API Reference
+
+### Macros
+
+| Macro | Description |
+|-------|-------------|
+| `ALLOC8_REDIRECT(HeapRedirectType)` | Generate xxmalloc functions from HeapRedirect |
+| `ALLOC8_THREAD_REDIRECT(ThreadRedirectType)` | Generate xxthread functions from ThreadRedirect |
+| `ALLOC8_REDIRECT_WITH_THREADS(HeapRedirectType)` | Combined heap + thread redirect |
+| `ALLOC8_EXPORT` | Mark symbol for export |
+| `ALLOC8_ALWAYS_INLINE` | Force inlining |
+| `ALLOC8_LIKELY(x)` / `ALLOC8_UNLIKELY(x)` | Branch prediction hints |
+
+### Templates
+
+| Template | Description |
+|----------|-------------|
+| `alloc8::HeapRedirect<T>` | Wraps allocator T, provides static xxmalloc interface |
+| `alloc8::ThreadRedirect<T>` | Wraps allocator T, provides static xxthread interface |
+| `alloc8::Redirect<T>` | Alias for HeapRedirect<T> |
+| `alloc8::Threads<T>` | Alias for ThreadRedirect<T> |
+
+### Concepts (C++20)
+
+| Concept | Required Methods |
+|---------|------------------|
+| `alloc8::Allocator` | malloc, free, memalign, getSize, lock, unlock |
+| `alloc8::AllocatorWithRealloc` | Allocator + realloc |
+| `alloc8::ThreadAwareAllocator` | threadInit, threadCleanup |

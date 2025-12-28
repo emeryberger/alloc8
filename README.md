@@ -114,26 +114,57 @@ This generates `myalloc_malloc()`, `myalloc_free()`, etc.
 
 High-performance allocators like Hoard use per-thread heaps (TLABs) to reduce contention. alloc8 provides optional pthread interposition to support these allocators with proper initialization ordering.
 
-### Thread Lifecycle Hooks
+### Recommended: ThreadRedirect Template
 
-Implement these optional hooks to be notified of thread creation/destruction:
+The easiest way to add thread hooks is to add `threadInit()` and `threadCleanup()` methods to your heap class:
+
+```cpp
+#include <alloc8/alloc8.h>
+
+class MyThreadAwareHeap {
+public:
+  // Heap operations (required)
+  void* malloc(size_t sz);
+  void free(void* ptr);
+  void* memalign(size_t align, size_t sz);
+  size_t getSize(void* ptr);
+  void lock();
+  void unlock();
+
+  // Thread hooks (optional)
+  void threadInit() {
+    // Initialize per-thread heap structures (TLABs)
+  }
+
+  void threadCleanup() {
+    // Flush thread-local allocation buffers
+  }
+};
+
+using MyRedirect = alloc8::HeapRedirect<MyThreadAwareHeap>;
+ALLOC8_REDIRECT_WITH_THREADS(MyRedirect);
+
+// Or use separate macros:
+// ALLOC8_REDIRECT(MyRedirect);
+// using MyThreads = alloc8::ThreadRedirect<MyThreadAwareHeap>;
+// ALLOC8_THREAD_REDIRECT(MyThreads);
+```
+
+### Alternative: Direct xxthread Functions
+
+For more control, implement the hooks directly:
 
 ```cpp
 extern "C" {
-  // Called when a new thread starts (before user's thread function)
   void xxthread_init(void) {
     // Initialize per-thread heap structures (TLABs)
-    // Assign thread to a heap from the thread pool
   }
 
-  // Called when a thread is about to exit
   void xxthread_cleanup(void) {
     // Flush thread-local allocation buffers
-    // Return per-thread heap to the pool
   }
 
   // Optional: Flag for single-threaded lock optimization
-  // If provided, alloc8 sets this to 1 when first thread is created
   volatile int xxthread_created_flag;
 }
 ```
@@ -147,8 +178,8 @@ add_library(myalloc SHARED
   my_allocator.cpp
   ${ALLOC8_INTERPOSE_SOURCES}
   ${ALLOC8_THREAD_SOURCES}  # Enables pthread interposition
-  ${ALLOC8_COMMON_SOURCES}
 )
+target_link_libraries(myalloc PRIVATE alloc8::interpose)
 ```
 
 ### How It Works
@@ -180,7 +211,12 @@ Your allocator class must implement:
 | `void lock()` | Lock for fork safety |
 | `void unlock()` | Unlock for fork safety |
 
-Optional: `void* realloc(void* ptr, size_t sz)` - if not provided, a default implementation is used.
+Optional methods:
+| Method | Description |
+|--------|-------------|
+| `void* realloc(void* ptr, size_t sz)` | Reallocation (default provided) |
+| `void threadInit()` | Called when new thread starts |
+| `void threadCleanup()` | Called when thread exits |
 
 ## Building alloc8
 

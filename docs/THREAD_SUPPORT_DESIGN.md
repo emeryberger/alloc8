@@ -1,8 +1,10 @@
 # alloc8 Thread Lifecycle Support Design
 
+**Status: Implemented** - See `include/alloc8/allocator_traits.h` for `ThreadRedirect<T>` and `include/alloc8/alloc8.h` for macros.
+
 ## Overview
 
-This document outlines a design for adding optional thread lifecycle hooks to alloc8,
+This document outlines the design for optional thread lifecycle hooks in alloc8,
 allowing allocators to be notified when threads are created and destroyed.
 
 ## Motivation
@@ -242,7 +244,76 @@ No need for custom mactls.cpp wrapper - alloc8 handles the interposition.
 
 ## Implementation Priority
 
-1. macOS implementation (most pressing due to current Hoard issues)
-2. Linux implementation
-3. Windows implementation
-4. Documentation and examples
+1. macOS implementation (most pressing due to current Hoard issues) - **Done**
+2. Linux implementation - **Done**
+3. Windows implementation - Planned
+4. Documentation and examples - **Done**
+
+## Implemented API
+
+The final implementation provides two approaches:
+
+### Approach 1: ThreadRedirect Template (Recommended)
+
+Add `threadInit()` and `threadCleanup()` methods to your heap class:
+
+```cpp
+#include <alloc8/alloc8.h>
+
+class MyHeap {
+public:
+  // Required heap methods...
+  void* malloc(size_t sz);
+  void free(void* ptr);
+  // ...
+
+  // Thread hooks
+  void threadInit() { /* init per-thread state */ }
+  void threadCleanup() { /* cleanup per-thread state */ }
+};
+
+using MyRedirect = alloc8::HeapRedirect<MyHeap>;
+ALLOC8_REDIRECT_WITH_THREADS(MyRedirect);
+```
+
+### Approach 2: Direct xxthread Functions
+
+For more control, implement the C functions directly:
+
+```cpp
+extern "C" {
+  void xxthread_init(void) { /* ... */ }
+  void xxthread_cleanup(void) { /* ... */ }
+}
+```
+
+### CMake
+
+```cmake
+add_library(myalloc SHARED
+  my_allocator.cpp
+  ${ALLOC8_INTERPOSE_SOURCES}
+  ${ALLOC8_THREAD_SOURCES}
+)
+```
+
+### Macros
+
+| Macro | Description |
+|-------|-------------|
+| `ALLOC8_REDIRECT(T)` | Generate xxmalloc functions |
+| `ALLOC8_THREAD_REDIRECT(T)` | Generate xxthread functions |
+| `ALLOC8_REDIRECT_WITH_THREADS(T)` | Combined heap + thread |
+
+### Templates
+
+| Template | Description |
+|----------|-------------|
+| `alloc8::HeapRedirect<T>` | Wraps allocator for xxmalloc |
+| `alloc8::ThreadRedirect<T>` | Wraps allocator for xxthread |
+
+### Concepts (C++20)
+
+| Concept | Required Methods |
+|---------|------------------|
+| `alloc8::ThreadAwareAllocator` | threadInit(), threadCleanup() |
