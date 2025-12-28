@@ -175,6 +175,19 @@ elseif(ALLOC8_PLATFORM_WINDOWS)
       target_include_directories(detours_lib PUBLIC ${DETOURS_SRC_DIR})
       target_compile_definitions(detours_lib PRIVATE WIN32_LEAN_AND_MEAN)
       add_library(Detours::Detours ALIAS detours_lib)
+
+      # Build Detours utilities (withdll.exe, setdll.exe)
+      set(DETOURS_SAMPLES_DIR ${detours_SOURCE_DIR}/samples)
+
+      # withdll.exe - run a process with a DLL injected
+      add_executable(withdll ${DETOURS_SAMPLES_DIR}/withdll/withdll.cpp)
+      target_link_libraries(withdll PRIVATE detours_lib)
+      target_compile_definitions(withdll PRIVATE WIN32_LEAN_AND_MEAN)
+
+      # setdll.exe - add/remove DLL from PE import table
+      add_executable(setdll ${DETOURS_SAMPLES_DIR}/setdll/setdll.cpp)
+      target_link_libraries(setdll PRIVATE detours_lib)
+      target_compile_definitions(setdll PRIVATE WIN32_LEAN_AND_MEAN)
     endif()
 
     set(ALLOC8_INTERPOSE_SOURCES
