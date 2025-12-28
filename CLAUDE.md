@@ -12,25 +12,32 @@ Factored from patterns in Hoard, DieHard, and Scalene (all using Heap-Layers).
 # Configure with tests and examples
 cmake -B build -DALLOC8_BUILD_TESTS=ON -DALLOC8_BUILD_EXAMPLES=ON
 
-# Build
+# Build (Unix)
 cmake --build build
 
+# Build (Windows - specify Release config)
+cmake --build build --config Release
+
 # Run tests
-ctest --test-dir build
+ctest --test-dir build                    # Unix
+ctest --test-dir build -C Release         # Windows
 
 # Test interposition (macOS)
 DYLD_INSERT_LIBRARIES=build/examples/simple_heap/libsimple_heap.dylib ./build/tests/test_basic_alloc
 
 # Test interposition (Linux)
 LD_PRELOAD=build/examples/simple_heap/libsimple_heap.so ./build/tests/test_basic_alloc
+
+# Test interposition (Windows) - run any program, DLL hooks are installed automatically
+build\examples\simple_heap\Release\libsimple_heap.dll  # Copy to app directory or use withdll.exe
 ```
 
 ## Building DieHard/Hoard Examples
 
-Dependencies are automatically fetched via CMake FetchContent.
+Dependencies are automatically fetched via CMake FetchContent (or use local repos if available).
 
 ```bash
-# DieHard example - use GCC 11+ for best LTO performance
+# DieHard example - use GCC 11+ for best LTO performance (Linux)
 CXX=/opt/gcc-11/bin/g++ CC=/opt/gcc-11/bin/gcc cmake -B build \
   -DALLOC8_BUILD_EXAMPLES=ON -DALLOC8_BUILD_DIEHARD_EXAMPLE=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build
@@ -41,12 +48,20 @@ LD_PRELOAD=build/examples/diehard/libdiehard_alloc8.so ./test_program
 # Test DieHard (macOS)
 DYLD_INSERT_LIBRARIES=build/examples/diehard/libdiehard_alloc8.dylib ./test_program
 
-# Hoard example (working on Linux, has macOS init timing issues)
+# Hoard example (working on Linux and Windows, has macOS init timing issues)
 cmake -B build -DALLOC8_BUILD_EXAMPLES=ON -DALLOC8_BUILD_HOARD_EXAMPLE=ON
 cmake --build build
 
 # Test Hoard (Linux)
 LD_PRELOAD=build/examples/hoard/libhoard_alloc8.so ./test_program
+
+# Windows build (DieHard and Hoard)
+cmake -B build -DALLOC8_BUILD_EXAMPLES=ON -DALLOC8_BUILD_DIEHARD_EXAMPLE=ON -DALLOC8_BUILD_HOARD_EXAMPLE=ON
+cmake --build build --config Release
+
+# Output DLLs:
+#   build/examples/diehard/Release/diehard_alloc8.dll
+#   build/examples/hoard/Release/hoard_alloc8.dll
 ```
 
 ### DieHard Zero-Overhead Build
@@ -87,6 +102,7 @@ Performance comparison (threadtest, 8 threads, 1000 iterations, 8000 objects):
 |----------|------|-----------|
 | Linux | `src/platform/linux/linux_threads.cpp` | Strong symbol aliasing for pthread_create/pthread_exit |
 | macOS | `src/platform/macos/mac_threads.cpp` | Interpose pthread functions |
+| Windows | `src/platform/windows/win_threads.cpp` | DllMain DLL_THREAD_ATTACH/DETACH notifications |
 
 ### xxmalloc Interface
 
@@ -128,6 +144,12 @@ For thread-aware allocators:
 - Microsoft Detours fetched via CMake FetchContent
 - Must handle "foreign" pointers allocated before hooks installed
 - Uses SEH for safe foreign pointer detection
+- Thread hooks via DllMain `DLL_THREAD_ATTACH`/`DLL_THREAD_DETACH` notifications
+- Define `ALLOC8_NO_DLLMAIN` if providing your own DllMain (call `InitializeAlloc8()` manually)
+- Uses `TlsAlloc`/`TlsGetValue`/`TlsSetValue` for thread-local storage
+- Exports `InitializeAlloc8()` and `FinalizeAlloc8()` for manual initialization
+- ARM64 and x64 architectures supported
+- `new_delete.cpp` excluded on Windows (handled by Detours)
 
 ## Common Issues and Solutions
 
@@ -362,11 +384,14 @@ alloc8/
 │       ├── macos/
 │       │   ├── mac_wrapper.cpp     # Includes mac_zones.cpp
 │       │   └── mac_threads.cpp     # Thread lifecycle hooks
-│       └── windows/win_wrapper_detours.cpp
+│       └── windows/
+│           ├── win_wrapper_detours.cpp  # Microsoft Detours interposition
+│           └── win_threads.cpp          # Thread lifecycle hooks via DllMain
 ├── examples/
 │   ├── simple_heap/         # Basic example with statistics
-│   ├── diehard/             # DieHard integration (working)
-│   └── hoard/               # Hoard integration (working on Linux)
+│   ├── diehard/             # DieHard integration (Linux, macOS, Windows)
+│   └── hoard/               # Hoard integration (Linux, Windows)
+│       └── hoard_thread_hooks_win.cpp   # Windows-specific TLS management
 └── tests/
 ```
 
@@ -383,6 +408,8 @@ alloc8/
    nm -gU libmyalloc.dylib | grep malloc
    # Linux
    nm -D libmyalloc.so | grep malloc
+   # Windows
+   dumpbin /exports myalloc.dll | findstr malloc
    ```
 
 3. **Debug with lldb/gdb:**
@@ -400,6 +427,17 @@ alloc8/
    ```
 
 5. **If works in debugger but not standalone:** Likely initialization timing issue.
+
+6. **Windows: Check DLL dependencies:**
+   ```cmd
+   dumpbin /dependents myalloc.dll
+   ```
+
+7. **Windows: Verify DLL architecture:**
+   ```bash
+   file myalloc.dll
+   # Should show: PE32+ executable (DLL) ... Aarch64 or x86-64
+   ```
 
 ## API Reference
 
