@@ -4,6 +4,13 @@
 add_executable(test_basic_alloc test_basic_alloc.cpp)
 target_compile_features(test_basic_alloc PRIVATE cxx_std_17)
 
+# threadtest - multi-threaded allocator benchmark from Hoard
+add_executable(threadtest threadtest.cpp)
+target_compile_features(threadtest PRIVATE cxx_std_17)
+if(NOT WIN32)
+  target_link_libraries(threadtest PRIVATE pthread)
+endif()
+
 # Add basic test (without interposition - just tests the test itself)
 add_test(NAME test_basic_alloc_native COMMAND test_basic_alloc)
 
