@@ -158,7 +158,43 @@ using MyRedirect = alloc8::HeapRedirect<MyHeap>;
 ALLOC8_REDIRECT(MyRedirect);
 ```
 
-### Pattern 2: Direct xxmalloc (For Complex Heaps like Hoard)
+### Pattern 2: HeapRedirect with Thread Hooks (For Per-Thread State)
+```cpp
+class MyThreadAwareHeap {
+public:
+  // Heap operations (required)
+  void* malloc(size_t sz);
+  void free(void* ptr);
+  void* memalign(size_t align, size_t sz);
+  size_t getSize(void* ptr);
+  void lock();
+  void unlock();
+
+  // Thread hooks (optional - for per-thread TLABs, caches, etc.)
+  void threadInit();      // Called when new thread starts
+  void threadCleanup();   // Called when thread exits
+};
+
+using MyRedirect = alloc8::HeapRedirect<MyThreadAwareHeap>;
+ALLOC8_REDIRECT_WITH_THREADS(MyRedirect);
+
+// Or separately:
+// ALLOC8_REDIRECT(MyRedirect);
+// using MyThreads = alloc8::ThreadRedirect<MyThreadAwareHeap>;
+// ALLOC8_THREAD_REDIRECT(MyThreads);
+```
+
+CMake setup for thread-aware allocators:
+```cmake
+add_library(myalloc SHARED
+  my_allocator.cpp
+  ${ALLOC8_INTERPOSE_SOURCES}
+  ${ALLOC8_THREAD_SOURCES}  # Required for thread hooks
+)
+target_link_libraries(myalloc PRIVATE alloc8::interpose)
+```
+
+### Pattern 3: Direct xxmalloc (For Complex Heaps like Hoard)
 ```cpp
 // Implement xxmalloc functions directly
 extern "C" {
@@ -170,6 +206,10 @@ extern "C" {
   ALLOC8_EXPORT void xxmalloc_unlock() { ... }
   ALLOC8_EXPORT void* xxrealloc(void* ptr, size_t sz) { ... }
   ALLOC8_EXPORT void* xxcalloc(size_t count, size_t sz) { ... }
+
+  // Optional thread hooks
+  ALLOC8_EXPORT void xxthread_init() { ... }
+  ALLOC8_EXPORT void xxthread_cleanup() { ... }
 }
 ```
 

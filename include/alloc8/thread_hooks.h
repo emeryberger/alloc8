@@ -1,8 +1,43 @@
 // alloc8/include/alloc8/thread_hooks.h
-// Optional thread lifecycle hooks for thread-aware allocators
+// Thread lifecycle hooks for thread-aware allocators
 //
 // Allocators that need per-thread state (TLABs, thread-local heaps) can
 // implement these hooks to be notified of thread creation/destruction.
+//
+// ─── RECOMMENDED APPROACH ─────────────────────────────────────────────────────
+//
+// Add threadInit() and threadCleanup() methods to your allocator class,
+// then use ALLOC8_THREAD_REDIRECT or ALLOC8_REDIRECT_WITH_THREADS:
+//
+//   class MyHeap {
+//   public:
+//     void* malloc(size_t sz) { ... }
+//     void free(void* ptr) { ... }
+//     // ... other methods ...
+//
+//     void threadInit() {
+//       // Initialize per-thread state (TLABs, caches)
+//     }
+//
+//     void threadCleanup() {
+//       // Cleanup per-thread state
+//     }
+//   };
+//
+//   using MyRedirect = alloc8::HeapRedirect<MyHeap>;
+//   ALLOC8_REDIRECT_WITH_THREADS(MyRedirect);
+//
+// In CMakeLists.txt, include ${ALLOC8_THREAD_SOURCES}:
+//
+//   add_library(myalloc SHARED
+//     my_allocator.cpp
+//     ${ALLOC8_INTERPOSE_SOURCES}
+//     ${ALLOC8_THREAD_SOURCES}
+//   )
+//
+// ─── ALTERNATIVE: DIRECT IMPLEMENTATION ───────────────────────────────────────
+//
+// For more control, implement the xxthread_* functions directly:
 
 #ifndef ALLOC8_THREAD_HOOKS_H
 #define ALLOC8_THREAD_HOOKS_H

@@ -75,9 +75,12 @@ concept AllocatorWithRealloc = Allocator<T> &&
  *   using MyRedirect = alloc8::HeapRedirect<MyHeap>;
  *   ALLOC8_REDIRECT(MyRedirect);  // generates xxmalloc etc.
  */
-template<typename AllocatorType>
+template<typename Alloc>
 class HeapRedirect {
 public:
+  // Expose allocator type for use by ALLOC8_REDIRECT_WITH_THREADS
+  using AllocatorType = Alloc;
+
   /**
    * Get singleton heap instance.
    * Uses placement new into static buffer to ensure it survives past atexit.
@@ -174,12 +177,113 @@ public:
   }
 };
 
-// ─── CONVENIENCE TYPE ALIAS ───────────────────────────────────────────────────
+// ─── THREAD-AWARE ALLOCATOR CONCEPT ───────────────────────────────────────────
+
+#if __cplusplus >= 202002L
+
+/**
+ * Concept for allocators that want thread lifecycle notifications.
+ * Thread-aware allocators can maintain per-thread state (TLABs, caches).
+ */
+template<typename T>
+concept ThreadAwareAllocator = requires(T& allocator) {
+  // Called when a new thread starts (before user code runs)
+  { allocator.threadInit() } -> std::same_as<void>;
+
+  // Called when a thread is about to exit
+  { allocator.threadCleanup() } -> std::same_as<void>;
+};
+
+#endif // C++20
+
+// ─── THREAD REDIRECT TEMPLATE ─────────────────────────────────────────────────
+
+/**
+ * ThreadRedirect: Bridges a thread-aware allocator to the xxthread interface.
+ *
+ * This template wraps a custom allocator class and provides static methods
+ * for thread lifecycle hooks. The allocator singleton is shared with HeapRedirect.
+ *
+ * @tparam AllocatorType Your custom allocator class
+ *
+ * Usage:
+ *   class MyHeap {
+ *     // ... malloc/free methods ...
+ *     void threadInit();      // Called when thread starts
+ *     void threadCleanup();   // Called when thread exits
+ *   };
+ *
+ *   using MyRedirect = alloc8::HeapRedirect<MyHeap>;
+ *   using MyThreadRedirect = alloc8::ThreadRedirect<MyHeap>;
+ *   ALLOC8_REDIRECT(MyRedirect);
+ *   ALLOC8_THREAD_REDIRECT(MyThreadRedirect);
+ *
+ * Or use the combined macro:
+ *   ALLOC8_REDIRECT_WITH_THREADS(MyRedirect);
+ */
+template<typename AllocatorType>
+class ThreadRedirect {
+public:
+  /**
+   * Get singleton allocator instance.
+   * Shares the same singleton as HeapRedirect<AllocatorType>.
+   */
+  ALLOC8_ALWAYS_INLINE
+  static AllocatorType* getAllocator() {
+    return HeapRedirect<AllocatorType>::getHeap();
+  }
+
+  /**
+   * Thread initialization hook.
+   * Called in new thread context before user code runs.
+   */
+  ALLOC8_ALWAYS_INLINE
+  static void threadInit() {
+    if constexpr (requires(AllocatorType& a) { a.threadInit(); }) {
+      getAllocator()->threadInit();
+    }
+  }
+
+  /**
+   * Thread cleanup hook.
+   * Called just before thread exits.
+   */
+  ALLOC8_ALWAYS_INLINE
+  static void threadCleanup() {
+    if constexpr (requires(AllocatorType& a) { a.threadCleanup(); }) {
+      getAllocator()->threadCleanup();
+    }
+  }
+
+  /**
+   * Check if allocator actually has thread hooks.
+   * Used to conditionally enable pthread interposition.
+   */
+  static constexpr bool hasThreadInit() {
+    return requires(AllocatorType& a) { a.threadInit(); };
+  }
+
+  static constexpr bool hasThreadCleanup() {
+    return requires(AllocatorType& a) { a.threadCleanup(); };
+  }
+
+  static constexpr bool hasThreadHooks() {
+    return hasThreadInit() || hasThreadCleanup();
+  }
+};
+
+// ─── CONVENIENCE TYPE ALIASES ─────────────────────────────────────────────────
 
 /**
  * Helper to create a HeapRedirect from an allocator type.
  */
 template<typename AllocatorType>
 using Redirect = HeapRedirect<AllocatorType>;
+
+/**
+ * Helper to create a ThreadRedirect from an allocator type.
+ */
+template<typename AllocatorType>
+using Threads = ThreadRedirect<AllocatorType>;
 
 } // namespace alloc8
