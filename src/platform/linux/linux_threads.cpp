@@ -4,17 +4,26 @@
 // This file provides pthread_create/pthread_exit interposition that calls
 // the allocator's xxthread_init/xxthread_cleanup hooks.
 //
-// Based on the macOS implementation (mac_threads.cpp) but uses GNU strong
-// symbol aliasing and dlsym for Linux.
+// Uses direct calls to __pthread_create/__pthread_exit to avoid dlsym
+// (which can call malloc internally, causing recursion).
 
 #ifndef __linux__
 #error "This file is for Linux only"
 #endif
 
 #include <pthread.h>
-#include <dlfcn.h>
 #include <atomic>
 #include <cstdlib>
+
+// ─── REAL PTHREAD FUNCTIONS ─────────────────────────────────────────────────
+// Direct declarations of glibc internal symbols - avoids dlsym which can malloc
+
+extern "C" {
+  // glibc provides these as the "real" implementations
+  int __pthread_create(pthread_t*, const pthread_attr_t*,
+                       void* (*)(void*), void*);
+  void __pthread_exit(void*) __attribute__((__noreturn__));
+}
 
 // ─── WEAK SYMBOL DETECTION ───────────────────────────────────────────────────
 // These are defined by the allocator if it wants thread awareness.
@@ -43,36 +52,6 @@ static volatile int* get_thread_created_flag() {
   return &alloc8_internal_thread_flag;
 }
 
-// ─── REAL PTHREAD FUNCTIONS ─────────────────────────────────────────────────
-// Get pointers to the real pthread functions via dlsym
-
-using pthread_create_fn = int (*)(pthread_t*, const pthread_attr_t*,
-                                   void* (*)(void*), void*);
-using pthread_exit_fn = void (*)(void*);
-
-static pthread_create_fn real_pthread_create = nullptr;
-static pthread_exit_fn real_pthread_exit = nullptr;
-static std::atomic<bool> real_funcs_initialized{false};
-
-// Thread-local guard to prevent recursion during initialization
-static __thread int in_init = 0;
-
-static void init_real_funcs() {
-  if (real_funcs_initialized.load(std::memory_order_acquire)) {
-    return;
-  }
-  if (in_init) {
-    return;
-  }
-  in_init = 1;
-
-  real_pthread_create = (pthread_create_fn)dlsym(RTLD_NEXT, "pthread_create");
-  real_pthread_exit = (pthread_exit_fn)dlsym(RTLD_NEXT, "pthread_exit");
-
-  real_funcs_initialized.store(true, std::memory_order_release);
-  in_init = 0;
-}
-
 // ─── INITIALIZATION GUARD ────────────────────────────────────────────────────
 // Ensure pthread hooks don't activate until malloc is fully ready.
 // This prevents crashes during early library initialization.
@@ -81,7 +60,6 @@ static std::atomic<bool> alloc8_pthread_ready{false};
 
 __attribute__((constructor(200)))  // Run after malloc init (priority 101)
 static void alloc8_pthread_hooks_init() {
-  init_real_funcs();
   alloc8_pthread_ready.store(true, std::memory_order_release);
 }
 
@@ -142,16 +120,9 @@ static int alloc8_pthread_create(
     void* (*start_routine)(void*),
     void* arg)
 {
-  // Ensure real functions are initialized
-  init_real_funcs();
-
   // If not ready or no hooks, pass through to real pthread_create
-  if (!pthread_hooks_ready() || !has_thread_hooks() || !real_pthread_create) {
-    if (real_pthread_create) {
-      return real_pthread_create(thread, attr, start_routine, arg);
-    }
-    // Fallback if dlsym failed (shouldn't happen)
-    return -1;
+  if (!pthread_hooks_ready() || !has_thread_hooks()) {
+    return __pthread_create(thread, attr, start_routine, arg);
   }
 
   // Mark that threads are being created (for lock optimization)
@@ -163,14 +134,14 @@ static int alloc8_pthread_create(
       xxmalloc(sizeof(ThreadWrapper)));
   if (!wrapper) {
     // Fall back to direct call if allocation fails
-    return real_pthread_create(thread, attr, start_routine, arg);
+    return __pthread_create(thread, attr, start_routine, arg);
   }
 
   wrapper->user_func = start_routine;
   wrapper->user_arg = arg;
 
   // Create thread with our trampoline
-  int result = real_pthread_create(thread, attr, alloc8_thread_trampoline, wrapper);
+  int result = __pthread_create(thread, attr, alloc8_thread_trampoline, wrapper);
 
   if (result != 0) {
     // Creation failed, free wrapper
@@ -188,16 +159,8 @@ static void alloc8_pthread_exit(void* value_ptr) {
     xxthread_cleanup();
   }
 
-  // Ensure real function is available
-  init_real_funcs();
-
   // Call real pthread_exit (never returns)
-  if (real_pthread_exit) {
-    real_pthread_exit(value_ptr);
-  }
-
-  // Should never reach here, but satisfy noreturn
-  __builtin_unreachable();
+  __pthread_exit(value_ptr);
 }
 
 // ─── STRONG SYMBOL ALIASING ─────────────────────────────────────────────────

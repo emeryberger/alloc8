@@ -15,10 +15,12 @@
 #include <stdint.h>
 #include <malloc.h>
 #include <unistd.h>
-#include <dlfcn.h>
 #include <pthread.h>
 #include <limits.h>
 #include <new>
+
+// Direct glibc symbol to avoid dlsym (which can malloc)
+extern "C" char* __getcwd(char*, size_t);
 
 // ─── FORWARD DECLARATIONS ─────────────────────────────────────────────────────
 // These are provided by the user via ALLOC8_REDIRECT macro
@@ -56,17 +58,6 @@ extern "C" {
 #define STRONG_REDEF3(type, fname, arg1, arg2, arg3) \
   ATTRIBUTE_EXPORT type fname(arg1, arg2, arg3) __THROW STRONG_ALIAS(custom##fname)
 
-// ─── THREAD-LOCAL FOR DLSYM RECURSION ─────────────────────────────────────────
-
-static __thread int in_dlsym = 0;
-
-__attribute__((noinline))
-static void* safe_dlsym(void* handle, const char* symbol) {
-  ++in_dlsym;
-  void* ptr = dlsym(handle, symbol);
-  --in_dlsym;
-  return ptr;
-}
 
 // ─── CORE ALLOCATION FUNCTIONS ────────────────────────────────────────────────
 
@@ -84,10 +75,6 @@ void CUSTOM_PREFIX(free)(void* ptr) {
 
 extern "C" ATTRIBUTE_EXPORT __attribute__((flatten))
 void* CUSTOM_PREFIX(calloc)(size_t nelem, size_t elsize) {
-  // Reject calls from dlsym to avoid recursion
-  if (ALLOC8_UNLIKELY(in_dlsym)) {
-    return nullptr;
-  }
   return xxcalloc(nelem, elsize);
 }
 
@@ -219,23 +206,17 @@ struct mallinfo CUSTOM_PREFIX(mallinfo)() {
 #endif
 
 // ─── GETCWD WRAPPER ───────────────────────────────────────────────────────────
-
-typedef char* (*getcwd_fn)(char*, size_t);
+// getcwd with NULL buf allocates via malloc, so we intercept it
 
 extern "C" ATTRIBUTE_EXPORT
 char* CUSTOM_PREFIX(getcwd)(char* buf, size_t size) {
-  static getcwd_fn real_getcwd = nullptr;
-  if (!real_getcwd) {
-    real_getcwd = (getcwd_fn)(uintptr_t)safe_dlsym(RTLD_NEXT, "getcwd");
-  }
-
   if (!buf) {
     if (size == 0) {
       size = PATH_MAX;
     }
     buf = (char*)xxmalloc(size);
   }
-  return real_getcwd(buf, size);
+  return __getcwd(buf, size);
 }
 
 // ─── STRONG SYMBOL ALIASES ────────────────────────────────────────────────────
