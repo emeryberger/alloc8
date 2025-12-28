@@ -439,6 +439,89 @@ alloc8/
    # Should show: PE32+ executable (DLL) ... Aarch64 or x86-64
    ```
 
+## Verifying Allocator Interposition
+
+To confirm your custom allocator is actually being used (not the system allocator):
+
+1. **Init-time logging**: Add a printf/OutputDebugString in DllMain or allocator constructor:
+   ```cpp
+   // In DLL_PROCESS_ATTACH or allocator init
+   fprintf(stderr, "MyAllocator: Memory allocator active\n");
+   ```
+
+2. **Use simple_heap with statistics**: The simple_heap example tracks allocation counts. Run your test and check the counters.
+
+3. **Debugger breakpoints**: Set breakpoint on `xxmalloc` and run. If it's hit, interposition is working.
+
+4. **Check symbol exports**:
+   ```bash
+   # Windows
+   dumpbin /exports myalloc.dll | findstr malloc
+   # Linux
+   nm -D libmyalloc.so | grep " T.*malloc"
+   ```
+
+5. **Distinctive pointer patterns**: Allocators like DieHard use randomized placement. Check if returned pointers differ significantly from system malloc patterns.
+
+## Windows Performance Debugging
+
+### C++ Library Initialization Hack
+
+On Windows with Detours, hooks must be installed AFTER C++ library initialization to prevent heap corruption. Use this pattern from Hoard:
+
+```cpp
+// In DLL_PROCESS_ATTACH, BEFORE InitializeAlloc8():
+#include <iostream>
+std::cout << "";  // Forces C++ library init
+
+// Now safe to install hooks
+InitializeAlloc8();
+```
+
+Without this, the Windows heap and custom heap pointers get mixed up, causing crashes or corruption.
+
+### TLS Access Optimization
+
+Hot paths must minimize TLS lookups. The optimal pattern:
+
+```cpp
+// GOOD: Single TLS lookup
+TheCustomHeapType * getCustomHeap() {
+  if (!g_tlsReady) { return nullptr; }  // Fast early check
+  auto p = TlsGetValue(LocalTLABIndex);
+  if (p == NULL) {
+    initializeCustomHeap();
+    p = TlsGetValue(LocalTLABIndex);
+  }
+  return (TheCustomHeapType *) p;
+}
+
+void* xxmalloc(size_t sz) {
+  auto* heap = getCustomHeap();
+  if (heap) { return heap->malloc(sz); }
+  // ... init buffer fallback
+}
+
+// BAD: Double TLS lookup (2x overhead)
+void* xxmalloc(size_t sz) {
+  if (isCustomHeapInitialized()) {  // 1st TLS lookup
+    return getCustomHeap()->malloc(sz);  // 2nd TLS lookup
+  }
+  // ...
+}
+```
+
+### Windows TLS Best Practices
+
+- Use `TlsAlloc()` explicitly - don't assume any default index
+- Track TLS readiness with a global flag (`g_tlsReady`)
+- Call `TlsFree()` in `DLL_PROCESS_DETACH` for clean unload
+- Check `LocalTLABIndex != TLS_OUT_OF_INDEXES` before any TLS operations
+
+### SEH Overhead
+
+Windows Detours uses SEH (Structured Exception Handling) to detect "foreign pointers" - allocations made before hooks were installed. This adds overhead but is necessary for correctness.
+
 ## API Reference
 
 ### Macros
