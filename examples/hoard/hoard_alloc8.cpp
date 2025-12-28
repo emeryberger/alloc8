@@ -56,23 +56,29 @@ static char * initBufferPtr = initBuffer;
 extern "C" {
 
 ALLOC8_EXPORT void* xxmalloc(size_t sz) {
-  // Fast path: direct TLS access
-  if (__builtin_expect(theCustomHeap != nullptr, 1)) {
-    void* ptr = theCustomHeap->malloc(sz);
-    if (__builtin_expect(ptr != nullptr, 1)) {
-      return ptr;
+  // IMPORTANT: Check initializedTSD FIRST before accessing __thread variables!
+  // TLS is not available during early library initialization on macOS.
+  // Accessing __thread before TLS is ready causes a crash.
+  if (__builtin_expect(initializedTSD, 1)) {
+    // TLS is safe to access now
+    if (__builtin_expect(theCustomHeap != nullptr, 1)) {
+      // Fast path: direct TLS access
+      void* ptr = theCustomHeap->malloc(sz);
+      if (__builtin_expect(ptr != nullptr, 1)) {
+        return ptr;
+      }
+      fprintf(stderr, "Hoard: INTERNAL FAILURE.\n");
+      abort();
     }
-    fprintf(stderr, "Hoard: INTERNAL FAILURE.\n");
-    abort();
-  }
-  // Slow path: TLS not initialized yet
-  if (initializedTSD) {
     // TLS initialized but heap not set for this thread - use getCustomHeap()
     return getCustomHeap()->malloc(sz);
   }
   // Very early: satisfy request from init buffer before TLS is ready
-  void* ptr = initBufferPtr;
-  initBufferPtr += sz;
+  // Align to 16 bytes for ARM64 and general alignment requirements
+  size_t aligned_pos = (size_t)(initBufferPtr - initBuffer);
+  aligned_pos = (aligned_pos + 15) & ~(size_t)15;
+  void* ptr = initBuffer + aligned_pos;
+  initBufferPtr = initBuffer + aligned_pos + sz;
   if (initBufferPtr > initBuffer + MAX_LOCAL_BUFFER_SIZE) {
     abort();
   }
@@ -80,17 +86,21 @@ ALLOC8_EXPORT void* xxmalloc(size_t sz) {
 }
 
 ALLOC8_EXPORT void xxfree(void* ptr) {
-  // Fast path: direct TLS access
-  if (__builtin_expect(theCustomHeap != nullptr, 1)) {
-    theCustomHeap->free(ptr);
-    return;
-  }
-  // Don't free init buffer allocations
+  // Don't free init buffer allocations (check this FIRST, before TLS access)
   if (ptr >= initBuffer && ptr < initBuffer + MAX_LOCAL_BUFFER_SIZE) {
     return;
   }
-  // Slow path
-  getCustomHeap()->free(ptr);
+  // Check initializedTSD before accessing TLS
+  if (__builtin_expect(initializedTSD, 1)) {
+    if (__builtin_expect(theCustomHeap != nullptr, 1)) {
+      // Fast path: direct TLS access
+      theCustomHeap->free(ptr);
+      return;
+    }
+    // Slow path
+    getCustomHeap()->free(ptr);
+  }
+  // Very early: before TLS is ready, just leak (shouldn't happen for non-init-buffer ptrs)
 }
 
 ALLOC8_EXPORT void* xxmemalign(size_t alignment, size_t sz) {
@@ -98,11 +108,21 @@ ALLOC8_EXPORT void* xxmemalign(size_t alignment, size_t sz) {
 }
 
 ALLOC8_EXPORT size_t xxmalloc_usable_size(void* ptr) {
-  // Handle init buffer pointers
+  // Handle init buffer pointers (check FIRST, before TLS access)
   if (ptr >= initBuffer && ptr < initBuffer + MAX_LOCAL_BUFFER_SIZE) {
+    // Return a conservative size estimate for init buffer allocations
+    // We don't track individual sizes, so return remaining space
     return static_cast<size_t>((initBuffer + MAX_LOCAL_BUFFER_SIZE) - (char*)ptr);
   }
-  return getCustomHeap()->getSize(ptr);
+  // Check initializedTSD before accessing TLS
+  if (__builtin_expect(initializedTSD, 1)) {
+    if (__builtin_expect(theCustomHeap != nullptr, 1)) {
+      return theCustomHeap->getSize(ptr);
+    }
+    return getCustomHeap()->getSize(ptr);
+  }
+  // Very early: shouldn't happen for non-init-buffer pointers
+  return 0;
 }
 
 ALLOC8_EXPORT void xxmalloc_lock() {

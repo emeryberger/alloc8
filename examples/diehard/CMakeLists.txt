@@ -54,7 +54,7 @@ target_compile_definitions(diehard_alloc8 PRIVATE
   NDEBUG
   DIEHARD_DIEFAST=0
   DIEHARD_DIEHARDER=0
-  DIEHARD_SCALABLE=1
+  DIEHARD_SCALABLE=1  # Scalable with per-thread heaps (TheLargeHeap now has lock)
   _REENTRANT=1
 )
 
@@ -90,9 +90,11 @@ target_link_libraries(diehard_alloc8 PRIVATE
   dl
 )
 
-# Write a version map for symbol visibility (matches original DieHard)
-set(DIEHARD_VERS_SCRIPT ${CMAKE_CURRENT_BINARY_DIR}/diehard_vers.map)
-file(WRITE ${DIEHARD_VERS_SCRIPT}
+# Platform-specific symbol visibility
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  # Write a version map for symbol visibility (matches original DieHard)
+  set(DIEHARD_VERS_SCRIPT ${CMAKE_CURRENT_BINARY_DIR}/diehard_vers.map)
+  file(WRITE ${DIEHARD_VERS_SCRIPT}
 "GLIBC_2.2.5 {
 global:
     __libc_malloc;
@@ -124,8 +126,8 @@ local:
     *;
   };
 ")
-
-target_link_options(diehard_alloc8 PRIVATE "LINKER:--version-script=${DIEHARD_VERS_SCRIPT}")
+  target_link_options(diehard_alloc8 PRIVATE "LINKER:--version-script=${DIEHARD_VERS_SCRIPT}")
+endif()
 
 set_target_properties(diehard_alloc8 PROPERTIES
   OUTPUT_NAME "diehard_alloc8"

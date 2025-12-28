@@ -112,12 +112,40 @@ inline static TheCustomHeapType* getCustomHeap() {
   return heap;
 }
 
-// ─── INCLUDE ALLOC8'S HEADER-ONLY WRAPPER ───────────────────────────────────
-// gnu_wrapper.h calls getCustomHeap() directly for zero-overhead with LTO
+// ─── XXMALLOC INTERFACE (required by Heap-Layers wrappers) ──────────────────
+
+extern "C" {
+
+void* xxmalloc(size_t sz) {
+  return getCustomHeap()->malloc(sz);
+}
+
+void xxfree(void* ptr) {
+  getCustomHeap()->free(ptr);
+}
+
+void* xxmemalign(size_t alignment, size_t sz) {
+  return getCustomHeap()->memalign(alignment, sz);
+}
+
+size_t xxmalloc_usable_size(void* ptr) {
+  return getCustomHeap()->getSize(ptr);
+}
+
+void xxmalloc_lock() {
+  getCustomHeap()->lock();
+}
+
+void xxmalloc_unlock() {
+  getCustomHeap()->unlock();
+}
+
+} // extern "C"
+
+// ─── INCLUDE PLATFORM-SPECIFIC WRAPPER ───────────────────────────────────────
 
 #if defined(__linux__)
 #include <alloc8/gnu_wrapper.h>
 #elif defined(__APPLE__)
-// TODO: Create mac_wrapper.h for macOS
 #include "macwrapper.cpp"
 #endif
