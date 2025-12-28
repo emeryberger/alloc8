@@ -5,9 +5,15 @@
 
 #include <cstddef>
 #include <cstdlib>
+#include <cstdio>
 #include <new>
 #include <cassert>
 #include <cstring>
+
+// Required by printf.h/printf.cpp
+extern "C" void _putchar(char c) {
+  fputc(c, stderr);
+}
 
 // The heap multiplier
 enum { Numerator = 8, Denominator = 7 };
@@ -25,6 +31,14 @@ enum { Numerator = 8, Denominator = 7 };
 #include "globalfreepool.h"
 #include "objectownership.h"
 #include "scalableheap.h"
+
+// ─── PLATFORM-SPECIFIC LOCK TYPE ──────────────────────────────────────────────
+
+#if defined(_WIN32)
+typedef HL::WinLockType TheLockType;
+#else
+typedef PosixLockType TheLockType;
+#endif
 
 // ─── DIEHARD HEAP DEFINITION ─────────────────────────────────────────────────
 
@@ -54,7 +68,7 @@ PerThreadDieHardHeap;
 
 typedef
  ANSIWrapper<
-  LockedHeap<PosixLockType,
+  LockedHeap<TheLockType,
      CombineHeap<DieHardHeap<Numerator, Denominator, 1048576,
                              (DIEHARD_DIEFAST == 1),
                              (DIEHARD_DIEHARDER == 1)>,
@@ -70,7 +84,7 @@ TheDieHardHeap;
 // Non-scalable: Single global heap with lock
 typedef
  ANSIWrapper<
-  LockedHeap<PosixLockType,
+  LockedHeap<TheLockType,
      CombineHeap<DieHardHeap<Numerator, Denominator, 1048576,
                              (DIEHARD_DIEFAST == 1),
                              (DIEHARD_DIEHARDER == 1)>,
@@ -140,6 +154,32 @@ void xxmalloc_unlock() {
   getCustomHeap()->unlock();
 }
 
+void* xxrealloc(void* ptr, size_t sz) {
+  if (ptr == nullptr) {
+    return xxmalloc(sz);
+  }
+  if (sz == 0) {
+    xxfree(ptr);
+    return nullptr;
+  }
+  size_t oldSize = xxmalloc_usable_size(ptr);
+  void* newPtr = xxmalloc(sz);
+  if (newPtr != nullptr) {
+    memcpy(newPtr, ptr, oldSize < sz ? oldSize : sz);
+    xxfree(ptr);
+  }
+  return newPtr;
+}
+
+void* xxcalloc(size_t count, size_t sz) {
+  size_t totalSize = count * sz;
+  void* ptr = xxmalloc(totalSize);
+  if (ptr != nullptr) {
+    memset(ptr, 0, totalSize);
+  }
+  return ptr;
+}
+
 } // extern "C"
 
 // ─── INCLUDE PLATFORM-SPECIFIC WRAPPER ───────────────────────────────────────
@@ -148,4 +188,7 @@ void xxmalloc_unlock() {
 #include <alloc8/gnu_wrapper.h>
 #elif defined(__APPLE__)
 #include "macwrapper.cpp"
+#elif defined(_WIN32)
+// Windows uses alloc8's win_wrapper_detours.cpp linked via CMake
+// The xxmalloc functions above are called by the detoured malloc functions
 #endif

@@ -17,17 +17,17 @@ Status and plans for the alloc8 allocator interposition library.
 | C++17 aligned new/delete | Done | Done | Done |
 | malloc_zone_t support | N/A | Done | N/A |
 | Prefixed mode | Done | Done | Done |
-| Thread lifecycle hooks | Done | Done | Planned |
+| Thread lifecycle hooks | Done | Done | Done |
 | ThreadRedirect template | Done | Done | Done |
 | Header-only gnu_wrapper.h | Done | N/A | N/A |
 
 ### Examples
 
-| Example | Status | Notes |
-|---------|--------|-------|
-| simple_heap | Working | Basic mmap-based allocator with stats |
-| DieHard | Working | Zero-overhead with gnu_wrapper.h + LTO |
-| Hoard | Working | Uses alloc8 thread hooks for TLAB support |
+| Example | Linux | macOS | Windows | Notes |
+|---------|-------|-------|---------|-------|
+| simple_heap | Working | Working | Working | Basic mmap-based allocator with stats |
+| DieHard | Working | Working | N/A | Zero-overhead with gnu_wrapper.h + LTO. External library (Heap-Layers) doesn't support Windows. |
+| Hoard | Working | Has issues | N/A | Uses alloc8 thread hooks for TLAB support. External library (Heap-Layers) doesn't support Windows. |
 
 ## Roadmap
 
@@ -53,11 +53,10 @@ Status and plans for the alloc8 allocator interposition library.
   - Enables full inlining with LTO
   - Used by DieHard example for parity with original
 
-- [ ] **Windows thread hooks** (`src/platform/windows/win_threads.cpp`)
-  - Hook CreateThread/ExitThread via Detours
-  - Use FlsAlloc/FlsCallback for thread cleanup (more reliable than DLL_THREAD_DETACH)
-  - Support both native threads and pthread-win32
-  - Consider using TLS callbacks as alternative
+- [x] **Windows thread hooks** (`src/platform/windows/win_threads.cpp`)
+  - Uses DLL_THREAD_ATTACH/DLL_THREAD_DETACH via DllMain (simpler than hooking CreateThread)
+  - Provides `Alloc8OnThreadAttach()` and `Alloc8OnThreadDetach()` for allocator integration
+  - Works with Detours-based malloc interposition
 
 - [ ] **Test suite expansion**
   - Thread safety stress tests (multi-threaded malloc/free)

@@ -354,7 +354,9 @@ extern "C" __declspec(dllexport) void FinalizeAlloc8() {
 }
 
 // ─── DLL ENTRY POINT ──────────────────────────────────────────────────────────
+// Define ALLOC8_NO_DLLMAIN if you provide your own DllMain that calls InitializeAlloc8()
 
+#ifndef ALLOC8_NO_DLLMAIN
 BOOL APIENTRY DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
   switch (fdwReason) {
     case DLL_PROCESS_ATTACH:
@@ -368,8 +370,5 @@ BOOL APIENTRY DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
   }
   return TRUE;
 }
+#endif // ALLOC8_NO_DLLMAIN
 
-// Export for Detours withdll.exe
-extern "C" __declspec(dllexport) int DetourFinishHelperProcess(void) {
-  return 0;
-}

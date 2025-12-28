@@ -59,10 +59,17 @@ target_include_directories(alloc8_headers INTERFACE
 target_compile_features(alloc8_headers INTERFACE cxx_std_20)
 
 # ─── COMMON WRAPPER LIBRARY (OBJECT) ───────────────────────────────────────────
-add_library(alloc8_common OBJECT
-  src/common/wrapper_common.cpp
-  src/common/new_delete.cpp
-)
+# On Windows, operator new/delete are hooked via Detours, not by redefining them
+if(WIN32)
+  add_library(alloc8_common OBJECT
+    src/common/wrapper_common.cpp
+  )
+else()
+  add_library(alloc8_common OBJECT
+    src/common/wrapper_common.cpp
+    src/common/new_delete.cpp
+  )
+endif()
 target_link_libraries(alloc8_common PUBLIC alloc8_headers)
 set_target_properties(alloc8_common PROPERTIES
   POSITION_INDEPENDENT_CODE ON
@@ -180,6 +187,12 @@ elseif(ALLOC8_PLATFORM_WINDOWS)
       CACHE INTERNAL "Platform interpose sources"
     )
   endif()
+
+  # Thread lifecycle hooks for Windows - uses DllMain integration
+  set(ALLOC8_THREAD_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/win_threads.cpp
+    CACHE INTERNAL "Optional thread interposition sources"
+  )
 
   set(ALLOC8_COMMON_SOURCES
     $<TARGET_OBJECTS:alloc8_common>

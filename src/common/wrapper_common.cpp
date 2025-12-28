@@ -7,6 +7,10 @@
 #include <cstdint>
 #include <cerrno>
 
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 // Forward declarations
 extern "C" {
   void* xxmalloc(size_t);
