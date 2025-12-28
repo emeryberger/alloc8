@@ -1,13 +1,13 @@
 // alloc8/examples/diehard/diehard_alloc8.cpp
-// DieHard allocator adapted to use alloc8 for interposition
+// DieHard allocator using alloc8 for interposition
 //
-// This replaces DieHard's gnuwrapper.cpp/macwrapper.cpp with alloc8's
-// platform-independent interposition mechanism.
+// Uses alloc8's header-only gnu_wrapper.h for zero-overhead interposition.
 
 #include <cstddef>
 #include <cstdlib>
 #include <new>
 #include <cassert>
+#include <cstring>
 
 // The heap multiplier
 enum { Numerator = 8, Denominator = 7 };
@@ -79,55 +79,45 @@ TheDieHardHeap;
 
 #endif
 
-class TheCustomHeapType : public TheDieHardHeap {};
+// ─── CUSTOM HEAP TYPE WITH ALLOC8 INTERFACE ─────────────────────────────────
+// Adds memalign, lock, unlock as expected by alloc8's gnu_wrapper.h
 
-inline static TheCustomHeapType* getCustomHeap(void) {
-  static char buf[sizeof(TheCustomHeapType)];
-  static TheCustomHeapType* _theCustomHeap =
-    new (buf) TheCustomHeapType;
-  return _theCustomHeap;
-}
-
-// ─── ALLOC8 ADAPTER ──────────────────────────────────────────────────────────
-
-#include <alloc8/alloc8.h>
-
-/// DieHardHeapAdapter: Wraps DieHard's heap for alloc8
-class DieHardHeapAdapter {
+class TheCustomHeapType : public TheDieHardHeap {
 public:
-  void* malloc(size_t sz) {
-    return getCustomHeap()->malloc(sz);
+  // DieHard allocates power-of-two objects, naturally aligned
+  inline void* memalign(size_t alignment, size_t sz) {
+    return TheDieHardHeap::malloc(sz < alignment ? alignment : sz);
   }
 
-  void free(void* ptr) {
-    getCustomHeap()->free(ptr);
-  }
-
-  void* memalign(size_t alignment, size_t sz) {
-    // DieHard allocates power-of-two objects, naturally aligned
-    void* ptr = malloc(sz < alignment ? alignment : sz);
-    assert(reinterpret_cast<uintptr_t>(ptr) % alignment == 0);
-    return ptr;
-  }
-
-  size_t getSize(void* ptr) {
-    return getCustomHeap()->getSize(ptr);
-  }
-
-  void lock() {
+  // Fork safety - scalable version has per-thread heaps, no global lock
+  inline void lock() {
 #if !DIEHARD_SCALABLE
-    getCustomHeap()->lock();
+    TheDieHardHeap::lock();
 #endif
   }
 
-  void unlock() {
+  inline void unlock() {
 #if !DIEHARD_SCALABLE
-    getCustomHeap()->unlock();
+    TheDieHardHeap::unlock();
 #endif
   }
 };
 
-// ─── GENERATE XXMALLOC INTERFACE ─────────────────────────────────────────────
+// ─── HEAP SINGLETON (required by alloc8's gnu_wrapper.h) ────────────────────
+// Meyers singleton pattern - compiler optimizes away redundant checks with LTO
 
-using DieHardRedirect = alloc8::HeapRedirect<DieHardHeapAdapter>;
-ALLOC8_REDIRECT(DieHardRedirect);
+inline static TheCustomHeapType* getCustomHeap() {
+  static char buf[sizeof(TheCustomHeapType)];
+  static TheCustomHeapType* heap = new (buf) TheCustomHeapType;
+  return heap;
+}
+
+// ─── INCLUDE ALLOC8'S HEADER-ONLY WRAPPER ───────────────────────────────────
+// gnu_wrapper.h calls getCustomHeap() directly for zero-overhead with LTO
+
+#if defined(__linux__)
+#include <alloc8/gnu_wrapper.h>
+#elif defined(__APPLE__)
+// TODO: Create mac_wrapper.h for macOS
+#include "macwrapper.cpp"
+#endif
