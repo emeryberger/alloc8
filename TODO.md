@@ -35,8 +35,12 @@ Status and plans for the alloc8 allocator interposition library.
 
 - [x] **Linux thread hooks** (`src/platform/linux/linux_threads.cpp`)
   - Implement pthread_create/pthread_exit interposition for Linux
-  - Pattern similar to macOS mac_threads.cpp
-  - Uses dlsym(RTLD_NEXT) and strong symbol aliasing
+  - Uses `__pthread_create`/`__pthread_exit` directly (no dlsym to avoid malloc recursion)
+  - Strong symbol aliasing for pthread_create/pthread_exit
+
+- [x] **Remove dlsym usage** (completed)
+  - Replaced dlsym with direct glibc symbols (`__pthread_create`, `__pthread_exit`, `__getcwd`)
+  - Avoids potential malloc recursion since dlsym can call malloc internally
 
 - [x] **ThreadRedirect template** (`include/alloc8/allocator_traits.h`)
   - Add `ThreadRedirect<T>` template mirroring `HeapRedirect<T>`
@@ -51,24 +55,30 @@ Status and plans for the alloc8 allocator interposition library.
 
 - [ ] **Windows thread hooks** (`src/platform/windows/win_threads.cpp`)
   - Hook CreateThread/ExitThread via Detours
+  - Use FlsAlloc/FlsCallback for thread cleanup (more reliable than DLL_THREAD_DETACH)
   - Support both native threads and pthread-win32
+  - Consider using TLS callbacks as alternative
 
 - [ ] **Test suite expansion**
-  - Thread safety stress tests
-  - Fork safety tests
-  - Alignment edge cases
-  - Large allocation tests
+  - Thread safety stress tests (multi-threaded malloc/free)
+  - Fork safety tests (Linux/macOS)
+  - Alignment edge cases (memalign, posix_memalign, aligned_alloc)
+  - Large allocation tests (>4GB on 64-bit)
+  - Cross-thread free tests (alloc on thread A, free on thread B)
 
 ### Medium Priority
+
+- [ ] **Header-only mac_wrapper.h** (similar to gnu_wrapper.h)
+  - Zero-overhead macOS interposition via getCustomHeap() pattern
+  - Enable full inlining with LTO on macOS
+
+- [ ] **Fix Hoard macOS timing issues**
+  - Currently works on Linux but has init timing issues on macOS
+  - Investigate constructor priority ordering with malloc_zone_t
 
 - [ ] **Scalene integration example**
   - Demonstrate sampling allocator pattern
   - Show how to integrate with Python
-
-- [ ] **Documentation improvements**
-  - API reference documentation
-  - Platform-specific gotchas
-  - Debugging guide for interposition issues
 
 - [ ] **CI/CD setup**
   - GitHub Actions for Linux/macOS/Windows
