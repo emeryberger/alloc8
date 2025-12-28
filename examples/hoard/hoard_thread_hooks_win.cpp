@@ -13,6 +13,7 @@
 
 #include <windows.h>
 #include <new>
+#include <iostream>
 
 #include "heaplayers.h"
 #include "hoard/hoardtlab.h"
@@ -121,6 +122,13 @@ BOOL APIENTRY DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
         HMODULE hSelf = nullptr;
         GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
                            (LPCWSTR)DllMain, &hSelf);
+
+        // Before we do anything, force initialization of the C++
+        // library. Without this pre-initialization, the Windows heap
+        // and the Hoard heaps get mixed up, and then nothing
+        // works. This is quite the hack but seems to do the trick.
+        // -- Emery Berger, 24/1/2019
+        std::cout << "";
 
         // Allocate TLS index
         g_tlsIndex = TlsAlloc();
