@@ -96,6 +96,8 @@ target_compile_definitions(hoard_alloc8 PRIVATE
 if(MSVC)
   target_compile_options(hoard_alloc8 PRIVATE
     /W3
+    /Oi      # Enable intrinsics
+    /Ot      # Favor fast code
     /wd4996  # Disable deprecation warnings
     /wd4267  # Disable size_t conversion warnings
     /wd4244  # Disable conversion warnings
