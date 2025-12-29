@@ -95,6 +95,7 @@ Performance comparison (threadtest, 8 threads, 1000 iterations, 8000 objects):
 | Linux | `include/alloc8/gnu_wrapper.h` | Header-only (zero-overhead) |
 | macOS | `src/platform/macos/mac_wrapper.cpp` | `__DATA,__interpose` section |
 | Windows | `src/platform/windows/win_wrapper_detours.cpp` | Microsoft Detours |
+| Windows | `src/platform/windows/alloc8_redirect.cpp` | IAT patching (zero-overhead) |
 
 ### Thread Interposition
 
@@ -141,6 +142,9 @@ For thread-aware allocators:
 - For zero-overhead: Use `gnu_wrapper.h` with GCC 11+ and full LTO
 
 ### Windows Specifics
+- Two interposition mechanisms available (see `docs/windows-interposition.md`):
+  - **Detours** (default): Inline hooking, catches all calls, ~11ns overhead per call
+  - **alloc8-redirect**: IAT patching at load time, 2.4x faster, zero per-call overhead
 - Microsoft Detours fetched via CMake FetchContent
 - Must handle "foreign" pointers allocated before hooks installed
 - Uses SEH for safe foreign pointer detection
