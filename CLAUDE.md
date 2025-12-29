@@ -178,6 +178,11 @@ For thread-aware allocators:
 **Cause:** Timing-dependent initialization race condition.
 **Status:** Known issue with Hoard example on macOS. Works fine on Linux.
 
+### 7. MSVC LTO Causes 6x Slowdown (Windows ARM64)
+**Problem:** Memory allocator is 6x slower than expected on ARM64 Windows with `/GL` and `/LTCG`.
+**Cause:** MSVC's ARM64 LTO codegen produces suboptimal code for interleaved malloc/free patterns.
+**Solution:** Disable `/GL` compiler flag and `/LTCG` linker flag. Also disable CMake's `CMAKE_INTERPROCEDURAL_OPTIMIZATION` on Windows. See "Windows Performance Debugging" section for details.
+
 ## Integration Patterns
 
 ### Pattern 1: HeapRedirect (Recommended for Simple Heaps)
@@ -521,6 +526,34 @@ void* xxmalloc(size_t sz) {
 ### SEH Overhead
 
 Windows Detours uses SEH (Structured Exception Handling) to detect "foreign pointers" - allocations made before hooks were installed. This adds overhead but is necessary for correctness.
+
+### MSVC LTO Causes 6x Slowdown on ARM64
+
+**Critical:** MSVC's whole-program optimization (`/GL`) and link-time code generation (`/LTCG`) cause a **6x performance regression** on ARM64 Windows for memory allocator workloads.
+
+Benchmarks (threadtest 4 threads, 40000 iterations, 1000 objects):
+- With LTO (`/GL` + `/LTCG`): 0.57s (2.5x slower than native malloc)
+- Without LTO: 0.16s (1.4x faster than native malloc)
+
+The issue appears to be in MSVC's ARM64 LTO codegen producing suboptimal code for interleaved malloc/free patterns typical of memory allocator usage.
+
+**Solution:** Disable `/GL` and `/LTCG` on Windows builds:
+```cmake
+# Do NOT use these on Windows ARM64:
+# set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /GL")
+# set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /LTCG")
+
+# Also disable CMake's IPO on Windows:
+if(NOT WIN32)
+  include(CheckIPOSupported)
+  check_ipo_supported(RESULT ipo_supported)
+  if(ipo_supported)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+  endif()
+endif()
+```
+
+Note: LTO works fine on Linux/macOS with GCC/Clang. This issue is specific to MSVC on ARM64.
 
 ## API Reference
 
