@@ -46,11 +46,10 @@ Hoard::HoardHeapType * getMainHoardHeap() {
 
 #if defined(_WIN32)
 // Windows: TLS is managed by hoard_thread_hooks_win.cpp via Windows TLS API
-// getCustomHeap() and isCustomHeapInitialized() are defined there
+// getCustomHeap() returns nullptr if TLS is not ready
 
-// Forward declarations from hoard_thread_hooks_win.cpp
+// Forward declaration from hoard_thread_hooks_win.cpp
 TheCustomHeapType* getCustomHeap();
-bool isCustomHeapInitialized();
 
 #else
 // Unix: Direct access to thread-local heap for fast path (defined in hoard_thread_hooks.cpp)
@@ -65,6 +64,7 @@ TheCustomHeapType* getCustomHeap();
 enum { MAX_LOCAL_BUFFER_SIZE = 256 * 131072 };
 static char initBuffer[MAX_LOCAL_BUFFER_SIZE];
 static char * initBufferPtr = initBuffer;
+
 
 // ─── ALLOC8 XXMALLOC INTERFACE ───────────────────────────────────────────────
 // These functions exactly match libhoard.cpp's xxmalloc interface.
@@ -84,17 +84,15 @@ extern "C" {
 
 ALLOC8_EXPORT void* xxmalloc(size_t sz) {
 #if defined(_WIN32)
-  // Windows: Use isCustomHeapInitialized() check
-  if (ALLOC8_LIKELY(isCustomHeapInitialized())) {
-    auto* heap = getCustomHeap();
-    if (ALLOC8_LIKELY(heap != nullptr)) {
-      void* ptr = heap->malloc(sz);
-      if (ALLOC8_LIKELY(ptr != nullptr)) {
-        return ptr;
-      }
-      fprintf(stderr, "Hoard: INTERNAL FAILURE.\n");
-      abort();
+  // Windows: Single TLS lookup - getCustomHeap() returns nullptr if not ready
+  auto* heap = getCustomHeap();
+  if (ALLOC8_LIKELY(heap != nullptr)) {
+    void* ptr = heap->malloc(sz);
+    if (ALLOC8_LIKELY(ptr != nullptr)) {
+      return ptr;
     }
+    fprintf(stderr, "Hoard: INTERNAL FAILURE.\n");
+    abort();
   }
 #else
   // Unix: Check initializedTSD FIRST before accessing __thread variables!
@@ -133,13 +131,11 @@ ALLOC8_EXPORT void xxfree(void* ptr) {
     return;
   }
 #if defined(_WIN32)
-  // Windows: Use isCustomHeapInitialized() check
-  if (ALLOC8_LIKELY(isCustomHeapInitialized())) {
-    auto* heap = getCustomHeap();
-    if (ALLOC8_LIKELY(heap != nullptr)) {
-      heap->free(ptr);
-      return;
-    }
+  // Windows: Single TLS lookup - getCustomHeap() returns nullptr if not ready
+  auto* heap = getCustomHeap();
+  if (ALLOC8_LIKELY(heap != nullptr)) {
+    heap->free(ptr);
+    return;
   }
 #else
   // Check initializedTSD before accessing TLS
@@ -168,12 +164,10 @@ ALLOC8_EXPORT size_t xxmalloc_usable_size(void* ptr) {
     return static_cast<size_t>((initBuffer + MAX_LOCAL_BUFFER_SIZE) - (char*)ptr);
   }
 #if defined(_WIN32)
-  // Windows: Use isCustomHeapInitialized() check
-  if (ALLOC8_LIKELY(isCustomHeapInitialized())) {
-    auto* heap = getCustomHeap();
-    if (ALLOC8_LIKELY(heap != nullptr)) {
-      return heap->getSize(ptr);
-    }
+  // Windows: Single TLS lookup - getCustomHeap() returns nullptr if not ready
+  auto* heap = getCustomHeap();
+  if (ALLOC8_LIKELY(heap != nullptr)) {
+    return heap->getSize(ptr);
   }
 #else
   // Check initializedTSD before accessing TLS

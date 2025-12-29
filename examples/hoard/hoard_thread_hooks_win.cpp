@@ -23,18 +23,12 @@ extern Hoard::HoardHeapType* getMainHoardHeap();
 
 // ─── THREAD-LOCAL STORAGE ────────────────────────────────────────────────────
 // Use Windows TLS API for thread-local heap pointer
+// Optimized for minimal hot-path overhead (single flag check + TLS lookup)
 
 static DWORD g_tlsIndex = TLS_OUT_OF_INDEXES;
-static bool g_tlsInitialized = false;
+static volatile bool g_tlsReady = false;  // Single flag for fast-path check
 
 // ─── EXPORTED FUNCTIONS FOR HOARD ────────────────────────────────────────────
-
-bool isCustomHeapInitialized() {
-  if (!g_tlsInitialized || g_tlsIndex == TLS_OUT_OF_INDEXES) {
-    return false;
-  }
-  return TlsGetValue(g_tlsIndex) != nullptr;
-}
 
 static TheCustomHeapType* initializeCustomHeap() {
   auto* mainHeap = getMainHoardHeap();
@@ -46,8 +40,8 @@ static TheCustomHeapType* initializeCustomHeap() {
 }
 
 TheCustomHeapType* getCustomHeap() {
-  if (!g_tlsInitialized || g_tlsIndex == TLS_OUT_OF_INDEXES) {
-    // TLS not ready yet - shouldn't happen normally
+  // Fast path: single volatile read
+  if (!g_tlsReady) {
     return nullptr;
   }
 
@@ -82,7 +76,7 @@ void xxthread_init(void) {
 
 // Called when a thread is about to exit (via DLL_THREAD_DETACH)
 void xxthread_cleanup(void) {
-  if (!g_tlsInitialized || g_tlsIndex == TLS_OUT_OF_INDEXES) {
+  if (!g_tlsReady) {
     return;
   }
 
@@ -135,7 +129,7 @@ BOOL APIENTRY DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
         if (g_tlsIndex == TLS_OUT_OF_INDEXES) {
           return FALSE;
         }
-        g_tlsInitialized = true;
+        g_tlsReady = true;
 
         // Initialize alloc8 (sets up detours)
         InitializeAlloc8();
@@ -143,6 +137,9 @@ BOOL APIENTRY DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
         // Force creation of the main thread's heap
         volatile auto* ch = getCustomHeap();
         (void)ch;
+
+        // Verification message
+        fprintf(stderr, "[Hoard alloc8] Memory allocator active\n");
       }
       break;
 
