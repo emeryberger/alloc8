@@ -31,6 +31,8 @@ extern "C" {
   void xxmalloc_unlock();
   void* xxrealloc(void*, size_t);
   void* xxcalloc(size_t, size_t);
+  void  xxfree_sized(void*, size_t);
+  void  xxfree_aligned_sized(void*, size_t, size_t);
 }
 
 // ─── FOREIGN POINTER HANDLING ─────────────────────────────────────────────────
@@ -103,6 +105,14 @@ static void* (WINAPI* Real_new_32)(size_t) = nullptr;
 static void* (WINAPI* Real_new_array_32)(size_t) = nullptr;
 static void  (WINAPI* Real_delete_32)(void*) = nullptr;
 static void  (WINAPI* Real_delete_array_32)(void*) = nullptr;
+
+// C++ sized delete operators - 64-bit
+static void (WINAPI* Real_delete_sized_64)(void*, size_t) = nullptr;
+static void (WINAPI* Real_delete_array_sized_64)(void*, size_t) = nullptr;
+
+// C++ sized delete operators - 32-bit
+static void (WINAPI* Real_delete_sized_32)(void*, size_t) = nullptr;
+static void (WINAPI* Real_delete_array_sized_32)(void*, size_t) = nullptr;
 
 // ─── DETOUR REPLACEMENT FUNCTIONS ─────────────────────────────────────────────
 
@@ -188,6 +198,14 @@ static char* __cdecl Detour_strdup(const char* s) {
     memcpy(newStr, s, len);
   }
   return newStr;
+}
+
+// C++ sized delete
+static void __cdecl Detour_free_sized(void* ptr, size_t sz) {
+  if (!ptr) return;
+  if (IsOurPointer(ptr)) {
+    xxfree_sized(ptr, sz);
+  }
 }
 
 // Debug variants
@@ -285,6 +303,16 @@ static DetourEntry g_CRTDetours[] = {
   DETOUR_ENTRY_MANGLED("??_U@YAPAXI@Z", Real_new_array_32, Detour_malloc),
   DETOUR_ENTRY_MANGLED("??3@YAXPAX@Z", Real_delete_32, Detour_free),
   DETOUR_ENTRY_MANGLED("??_V@YAXPAX@Z", Real_delete_array_32, Detour_free),
+
+  // C++ sized delete - 64-bit: operator delete(void*, size_t)
+  DETOUR_ENTRY_MANGLED("??3@YAXPEAX_K@Z", Real_delete_sized_64, Detour_free_sized),
+  // C++ sized delete[] - 64-bit: operator delete[](void*, size_t)
+  DETOUR_ENTRY_MANGLED("??_V@YAXPEAX_K@Z", Real_delete_array_sized_64, Detour_free_sized),
+
+  // C++ sized delete - 32-bit: operator delete(void*, unsigned int)
+  DETOUR_ENTRY_MANGLED("??3@YAXPAXI@Z", Real_delete_sized_32, Detour_free_sized),
+  // C++ sized delete[] - 32-bit: operator delete[](void*, unsigned int)
+  DETOUR_ENTRY_MANGLED("??_V@YAXPAXI@Z", Real_delete_array_sized_32, Detour_free_sized),
 };
 
 // ─── INSTALL/REMOVE DETOURS ───────────────────────────────────────────────────
