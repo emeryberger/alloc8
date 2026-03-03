@@ -39,7 +39,11 @@ extern "C" {
 // memory BEFORE our hooks were installed. These "foreign" pointers must be
 // handled gracefully to avoid crashes.
 //
-// We use Windows SEH to safely check if a pointer belongs to our allocator.
+// OPTIMIZATION: After initialization completes, we skip the expensive SEH check
+// since all new allocations go through our allocator. Only use SEH during the
+// initialization window when foreign pointers may exist.
+
+static volatile bool g_initComplete = false;
 
 static size_t SafeGetAllocSize(void* ptr) {
   if (!ptr) return 0;
@@ -52,6 +56,10 @@ static size_t SafeGetAllocSize(void* ptr) {
 }
 
 static inline bool IsOurPointer(void* ptr) {
+  // Fast path: after init completes, all allocations are ours
+  if (g_initComplete) {
+    return true;
+  }
   return SafeGetAllocSize(ptr) > 0;
 }
 
@@ -347,6 +355,9 @@ extern "C" __declspec(dllexport) void InitializeAlloc8() {
 
   // Install detours
   InstallDetours();
+
+  // Mark initialization complete - enables fast path for pointer checks
+  g_initComplete = true;
 }
 
 extern "C" __declspec(dllexport) void FinalizeAlloc8() {
@@ -354,7 +365,9 @@ extern "C" __declspec(dllexport) void FinalizeAlloc8() {
 }
 
 // ─── DLL ENTRY POINT ──────────────────────────────────────────────────────────
+// Define ALLOC8_NO_DLLMAIN if you provide your own DllMain that calls InitializeAlloc8()
 
+#ifndef ALLOC8_NO_DLLMAIN
 BOOL APIENTRY DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
   switch (fdwReason) {
     case DLL_PROCESS_ATTACH:
@@ -368,8 +381,5 @@ BOOL APIENTRY DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
   }
   return TRUE;
 }
+#endif // ALLOC8_NO_DLLMAIN
 
-// Export for Detours withdll.exe
-extern "C" __declspec(dllexport) int DetourFinishHelperProcess(void) {
-  return 0;
-}

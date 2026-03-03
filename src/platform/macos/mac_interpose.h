@@ -29,7 +29,7 @@ typedef struct alloc8_interpose_s {
 #define MAC_INTERPOSE(replacement, original) \
   __attribute__((used)) \
   static const alloc8_interpose_t alloc8_interpose_##replacement##_##original \
-  __attribute__((section("__DATA,__interpose"))) = { \
+  __attribute__((section("__DATA, __interpose"))) = { \
     (void*)replacement, \
     (void*)original \
   }

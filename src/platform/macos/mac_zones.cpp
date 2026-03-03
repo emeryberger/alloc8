@@ -21,6 +21,15 @@ static malloc_zone_t* getDefaultZone() {
   return &theDefaultZone;
 }
 
+// Force zone initialization very early during library load.
+// Priority 101 runs after basic C++ runtime setup (priority ~100) but before
+// most other constructors. This ensures the zone is ready before dyld triggers
+// any interposed malloc calls.
+__attribute__((constructor(101)))
+static void alloc8_early_zone_init() {
+  (void)getDefaultZone();
+}
+
 // ─── ZONE FUNCTION IMPLEMENTATIONS ────────────────────────────────────────────
 
 extern "C" {

@@ -4,7 +4,12 @@
 #include <alloc8/alloc8.h>
 #include <cstring>
 #include <cstdlib>
+#include <cstdint>
 #include <cerrno>
+
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 
 // Forward declarations
 extern "C" {
