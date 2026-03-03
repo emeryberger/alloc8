@@ -53,6 +53,32 @@
 // These call getCustomHeap() directly for maximum inlining with LTO
 
 namespace alloc8_internal {
+  // SFINAE dispatch via overload resolution.
+  // The int/long overload trick ensures the more specific version (SFINAE on
+  // decltype) is preferred when valid, with fallback chosen otherwise.
+  // This avoids GCC bugs with requires expressions and if constexpr.
+  namespace detail {
+    template <typename H>
+    inline auto call_free_sized(H* heap, void* ptr, size_t sz, int)
+      -> decltype(heap->free_sized(ptr, sz)) {
+      return heap->free_sized(ptr, sz);
+    }
+    template <typename H>
+    inline void call_free_sized(H* heap, void* ptr, size_t, long) {
+      heap->free(ptr);
+    }
+
+    template <typename H>
+    inline auto call_free_aligned_sized(H* heap, void* ptr, size_t alignment, size_t sz, int)
+      -> decltype(heap->free_aligned_sized(ptr, alignment, sz)) {
+      return heap->free_aligned_sized(ptr, alignment, sz);
+    }
+    template <typename H>
+    inline void call_free_aligned_sized(H* heap, void* ptr, size_t, size_t sz, long) {
+      call_free_sized(heap, ptr, sz, 0);
+    }
+  }
+
   inline void* do_malloc(size_t sz) {
     return getCustomHeap()->malloc(sz);
   }
@@ -62,23 +88,11 @@ namespace alloc8_internal {
   }
 
   inline void do_free_sized(void* ptr, size_t sz) {
-    using HeapType = std::remove_pointer_t<decltype(getCustomHeap())>;
-    if constexpr (requires(HeapType& h, void* p, size_t s) { h.free_sized(p, s); }) {
-      getCustomHeap()->free_sized(ptr, sz);
-    } else {
-      getCustomHeap()->free(ptr);
-    }
+    detail::call_free_sized(getCustomHeap(), ptr, sz, 0);
   }
 
   inline void do_free_aligned_sized(void* ptr, size_t alignment, size_t sz) {
-    using HeapType = std::remove_pointer_t<decltype(getCustomHeap())>;
-    if constexpr (requires(HeapType& h, void* p, size_t a, size_t s) {
-      h.free_aligned_sized(p, a, s);
-    }) {
-      getCustomHeap()->free_aligned_sized(ptr, alignment, sz);
-    } else {
-      do_free_sized(ptr, sz);
-    }
+    detail::call_free_aligned_sized(getCustomHeap(), ptr, alignment, sz, 0);
   }
 
   inline void* do_memalign(size_t alignment, size_t sz) {

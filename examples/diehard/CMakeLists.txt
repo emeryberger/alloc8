@@ -6,11 +6,13 @@
 
 include(FetchContent)
 
-# Check for local repos first (with Windows fixes applied)
-set(LOCAL_HEAPLAYERS_DIR "Z:/git/Heap-Layers")
-set(LOCAL_DIEHARD_DIR "Z:/git/DieHard")
+# Check for local repos first
+set(LOCAL_HEAPLAYERS_DIR "" CACHE PATH "Local Heap-Layers directory (optional)")
+set(LOCAL_DIEHARD_DIR "" CACHE PATH "Local DieHard directory (optional)")
+set(LOCAL_PRINTF_DIR "" CACHE PATH "Local printf directory (optional)")
 
-if(EXISTS "${LOCAL_HEAPLAYERS_DIR}/heaps/utility/uniqueheap.h" AND EXISTS "${LOCAL_DIEHARD_DIR}/src/include")
+if(LOCAL_HEAPLAYERS_DIR AND EXISTS "${LOCAL_HEAPLAYERS_DIR}/heaps/utility/uniqueheap.h"
+   AND LOCAL_DIEHARD_DIR AND EXISTS "${LOCAL_DIEHARD_DIR}/src/include")
   message(STATUS "Using local Heap-Layers from ${LOCAL_HEAPLAYERS_DIR}")
   message(STATUS "Using local DieHard from ${LOCAL_DIEHARD_DIR}")
   set(heaplayers_SOURCE_DIR "${LOCAL_HEAPLAYERS_DIR}")
@@ -53,12 +55,29 @@ else()
   endif()
 endif()
 
+# Fetch printf library (needed by DieHard's DieFast feature)
+if(LOCAL_PRINTF_DIR AND EXISTS "${LOCAL_PRINTF_DIR}/printf.cpp")
+  message(STATUS "Using local printf from ${LOCAL_PRINTF_DIR}")
+  set(printf_SOURCE_DIR "${LOCAL_PRINTF_DIR}")
+else()
+  FetchContent_Declare(
+    printf
+    GIT_REPOSITORY https://github.com/emeryberger/printf.git
+    GIT_TAG        master
+    GIT_SHALLOW    TRUE
+  )
+  FetchContent_GetProperties(printf)
+  if(NOT printf_POPULATED)
+    FetchContent_Populate(printf)
+  endif()
+endif()
+
 # Build DieHard with alloc8
 # On Windows, use alloc8 interpose sources; on Unix, use header-only wrapper
 if(WIN32)
   add_library(diehard_alloc8 SHARED
     diehard_alloc8.cpp
-    Z:/git/printf/printf.cpp
+    ${printf_SOURCE_DIR}/printf.cpp
     ${ALLOC8_INTERPOSE_SOURCES}
     ${ALLOC8_COMMON_SOURCES}
   )
@@ -78,7 +97,7 @@ target_include_directories(diehard_alloc8 PRIVATE
   ${heaplayers_SOURCE_DIR}
   ${heaplayers_SOURCE_DIR}/wrappers
   ${CMAKE_SOURCE_DIR}/include  # alloc8 headers
-  Z:/git/printf  # printf library for DieFast
+  ${printf_SOURCE_DIR}  # printf library for DieFast
 )
 
 target_compile_definitions(diehard_alloc8 PRIVATE
