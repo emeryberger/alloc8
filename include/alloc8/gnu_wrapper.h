@@ -37,6 +37,7 @@
 #include <pthread.h>
 #include <limits.h>
 #include <new>
+#include <type_traits>
 
 #include "platform.h"
 
@@ -58,6 +59,26 @@ namespace alloc8_internal {
 
   inline void do_free(void* ptr) {
     getCustomHeap()->free(ptr);
+  }
+
+  inline void do_free_sized(void* ptr, size_t sz) {
+    using HeapType = std::remove_pointer_t<decltype(getCustomHeap())>;
+    if constexpr (requires(HeapType& h, void* p, size_t s) { h.free_sized(p, s); }) {
+      getCustomHeap()->free_sized(ptr, sz);
+    } else {
+      getCustomHeap()->free(ptr);
+    }
+  }
+
+  inline void do_free_aligned_sized(void* ptr, size_t alignment, size_t sz) {
+    using HeapType = std::remove_pointer_t<decltype(getCustomHeap())>;
+    if constexpr (requires(HeapType& h, void* p, size_t a, size_t s) {
+      h.free_aligned_sized(p, a, s);
+    }) {
+      getCustomHeap()->free_aligned_sized(ptr, alignment, sz);
+    } else {
+      do_free_sized(ptr, sz);
+    }
   }
 
   inline void* do_memalign(size_t alignment, size_t sz) {
@@ -152,6 +173,20 @@ extern "C" ALLOC8_WRAPPER_EXPORT size_t malloc_usable_size(void* ptr) __THROW {
 extern "C" ALLOC8_WRAPPER_EXPORT void cfree(void* ptr) __THROW {
   if (ALLOC8_LIKELY(ptr != nullptr)) {
     alloc8_internal::do_free(ptr);
+  }
+}
+
+// ─── C23 SIZED FREE ──────────────────────────────────────────────────────────
+
+extern "C" ALLOC8_WRAPPER_EXPORT void free_sized(void* ptr, size_t sz) __THROW {
+  if (ALLOC8_LIKELY(ptr != nullptr)) {
+    alloc8_internal::do_free_sized(ptr, sz);
+  }
+}
+
+extern "C" ALLOC8_WRAPPER_EXPORT void free_aligned_sized(void* ptr, size_t alignment, size_t sz) __THROW {
+  if (ALLOC8_LIKELY(ptr != nullptr)) {
+    alloc8_internal::do_free_aligned_sized(ptr, alignment, sz);
   }
 }
 
@@ -285,12 +320,12 @@ void operator delete[](void* ptr, const std::nothrow_t&) noexcept {
   if (ptr) alloc8_internal::do_free(ptr);
 }
 
-void operator delete(void* ptr, size_t) noexcept {
-  if (ptr) alloc8_internal::do_free(ptr);
+void operator delete(void* ptr, size_t sz) noexcept {
+  if (ptr) alloc8_internal::do_free_sized(ptr, sz);
 }
 
-void operator delete[](void* ptr, size_t) noexcept {
-  if (ptr) alloc8_internal::do_free(ptr);
+void operator delete[](void* ptr, size_t sz) noexcept {
+  if (ptr) alloc8_internal::do_free_sized(ptr, sz);
 }
 
 // C++17 aligned new/delete
@@ -326,10 +361,10 @@ void operator delete[](void* ptr, std::align_val_t) noexcept {
   if (ptr) alloc8_internal::do_free(ptr);
 }
 
-void operator delete(void* ptr, size_t, std::align_val_t) noexcept {
-  if (ptr) alloc8_internal::do_free(ptr);
+void operator delete(void* ptr, size_t sz, std::align_val_t al) noexcept {
+  if (ptr) alloc8_internal::do_free_aligned_sized(ptr, static_cast<size_t>(al), sz);
 }
 
-void operator delete[](void* ptr, size_t, std::align_val_t) noexcept {
-  if (ptr) alloc8_internal::do_free(ptr);
+void operator delete[](void* ptr, size_t sz, std::align_val_t al) noexcept {
+  if (ptr) alloc8_internal::do_free_aligned_sized(ptr, static_cast<size_t>(al), sz);
 }

@@ -34,6 +34,8 @@ extern "C" {
   void xxmalloc_unlock();
   void* xxrealloc(void*, size_t);
   void* xxcalloc(size_t, size_t);
+  void  xxfree_sized(void*, size_t);
+  void  xxfree_aligned_sized(void*, size_t, size_t);
 }
 
 // ─── INTERNAL PREFIX ──────────────────────────────────────────────────────────
@@ -130,6 +132,22 @@ void* CUSTOM_PREFIX(aligned_alloc)(size_t alignment, size_t size) __THROW {
 extern "C" ATTRIBUTE_EXPORT __attribute__((flatten))
 size_t CUSTOM_PREFIX(malloc_usable_size)(void* ptr) {
   return xxmalloc_usable_size(ptr);
+}
+
+// ─── C23 SIZED FREE ──────────────────────────────────────────────────────────
+
+extern "C" ATTRIBUTE_EXPORT __attribute__((flatten))
+void CUSTOM_PREFIX(free_sized)(void* ptr, size_t sz) {
+  if (ALLOC8_LIKELY(ptr != nullptr)) {
+    xxfree_sized(ptr, sz);
+  }
+}
+
+extern "C" ATTRIBUTE_EXPORT __attribute__((flatten))
+void CUSTOM_PREFIX(free_aligned_sized)(void* ptr, size_t alignment, size_t sz) {
+  if (ALLOC8_LIKELY(ptr != nullptr)) {
+    xxfree_aligned_sized(ptr, alignment, sz);
+  }
 }
 
 // Legacy cfree
@@ -237,6 +255,8 @@ extern "C" {
   STRONG_REDEF2(char*, strndup, const char*, size_t);
   STRONG_REDEF1(void*, valloc, size_t);
   STRONG_REDEF1(void*, pvalloc, size_t);
+  STRONG_REDEF2(void, free_sized, void*, size_t);
+  STRONG_REDEF3(void, free_aligned_sized, void*, size_t, size_t);
 }
 
 // ─── GLIBC __libc_* SYMBOLS ───────────────────────────────────────────────────

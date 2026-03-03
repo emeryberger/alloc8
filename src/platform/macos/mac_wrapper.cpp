@@ -31,6 +31,8 @@ extern "C" {
   void xxmalloc_unlock();
   void* xxrealloc(void*, size_t);
   void* xxcalloc(size_t, size_t);
+  void  xxfree_sized(void*, size_t);
+  void  xxfree_aligned_sized(void*, size_t, size_t);
 
   // Functions we interpose on (need declarations for MAC_INTERPOSE)
   void  vfree(void*);
@@ -47,6 +49,12 @@ extern "C" {
   void* _ZnamRKSt9nothrow_t(size_t);      // operator new[](size_t, nothrow)
   void  _ZdlPvRKSt9nothrow_t(void*);      // operator delete(void*, nothrow)
   void  _ZdaPvRKSt9nothrow_t(void*);      // operator delete[](void*, nothrow)
+  void  _ZdlPvm(void*, size_t);           // operator delete(void*, size_t)
+  void  _ZdaPvm(void*, size_t);           // operator delete[](void*, size_t)
+
+  // C++14+17 sized+aligned delete (need wrapper functions below)
+  void  _ZdlPvmSt11align_val_t(void*, size_t, size_t);  // operator delete(void*, size_t, align_val_t)
+  void  _ZdaPvmSt11align_val_t(void*, size_t, size_t);  // operator delete[](void*, size_t, align_val_t)
 }
 
 // ─── CORE REPLACEMENT FUNCTIONS ───────────────────────────────────────────────
@@ -195,6 +203,22 @@ void replace_malloc_printf(const char*, ...) {
   // NOP
 }
 
+// ─── C23 SIZED FREE ──────────────────────────────────────────────────────────
+
+void replace_free_sized(void* ptr, size_t sz) {
+  xxfree_sized(ptr, sz);
+}
+
+void replace_free_aligned_sized(void* ptr, size_t alignment, size_t sz) {
+  xxfree_aligned_sized(ptr, alignment, sz);
+}
+
+// C++14+17 sized+aligned delete replacement (void*, size_t, align_val_t)
+// Note: align_val_t is a scoped enum wrapping size_t, so ABI-compatible with size_t
+void replace_delete_sized_aligned(void* ptr, size_t sz, size_t alignment) {
+  xxfree_aligned_sized(ptr, alignment, sz);
+}
+
 } // extern "C"
 
 // ─── MALLOC ZONE IMPLEMENTATION ───────────────────────────────────────────────
@@ -242,6 +266,19 @@ MAC_INTERPOSE(xxmalloc, _ZnamRKSt9nothrow_t);
 MAC_INTERPOSE(xxfree, _ZdlPvRKSt9nothrow_t);
 // operator delete[](void*, nothrow)
 MAC_INTERPOSE(xxfree, _ZdaPvRKSt9nothrow_t);
+// operator delete(void*, size_t) - use xxfree_sized to propagate size info
+MAC_INTERPOSE(xxfree_sized, _ZdlPvm);
+// operator delete[](void*, size_t) - use xxfree_sized to propagate size info
+MAC_INTERPOSE(xxfree_sized, _ZdaPvm);
+// operator delete(void*, size_t, align_val_t) - sized+aligned delete
+MAC_INTERPOSE(replace_delete_sized_aligned, _ZdlPvmSt11align_val_t);
+// operator delete[](void*, size_t, align_val_t) - sized+aligned delete[]
+MAC_INTERPOSE(replace_delete_sized_aligned, _ZdaPvmSt11align_val_t);
+
+// C23 sized free - interpose entries will be added once macOS libc exports these symbols.
+// For now, sized free is reached via:
+//   - C++ sized delete operators (new_delete.inc, included by simple_heap or alloc8 common)
+//   - malloc_zone_free_definite_size (mac_zones.cpp)
 
 // Malloc zone functions
 MAC_INTERPOSE(replace_malloc_create_zone, malloc_create_zone);

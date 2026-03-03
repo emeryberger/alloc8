@@ -102,8 +102,8 @@ void replace_malloc_zone_free(malloc_zone_t*, void* ptr) {
   xxfree(ptr);
 }
 
-void replace_malloc_zone_free_definite_size(malloc_zone_t*, void* ptr, size_t) {
-  xxfree(ptr);
+void replace_malloc_zone_free_definite_size(malloc_zone_t*, void* ptr, size_t sz) {
+  xxfree_sized(ptr, sz);
 }
 
 // ─── ZONE BATCH OPERATIONS ────────────────────────────────────────────────────

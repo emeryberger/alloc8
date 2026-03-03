@@ -104,6 +104,42 @@ public:
     }
   }
 
+  /**
+   * Sized free (C23 free_sized / C++14 sized delete).
+   * If the allocator provides free_sized(ptr, size), use it;
+   * otherwise fall back to free(ptr).
+   */
+  ALLOC8_ALWAYS_INLINE
+  static void free_sized(void* ptr, size_t size) {
+    if (ALLOC8_LIKELY(ptr != nullptr)) {
+      if constexpr (requires(AllocatorType& a, void* p, size_t s) {
+        a.free_sized(p, s);
+      }) {
+        getHeap()->free_sized(ptr, size);
+      } else {
+        getHeap()->free(ptr);
+      }
+    }
+  }
+
+  /**
+   * Sized + aligned free (C23 free_aligned_sized / C++14+17 sized+aligned delete).
+   * Falls back to free_sized, then to free.
+   */
+  ALLOC8_ALWAYS_INLINE
+  static void free_aligned_sized(void* ptr, size_t alignment, size_t size) {
+    if (ALLOC8_LIKELY(ptr != nullptr)) {
+      if constexpr (requires(AllocatorType& a, void* p, size_t al, size_t s) {
+        a.free_aligned_sized(p, al, s);
+      }) {
+        getHeap()->free_aligned_sized(ptr, alignment, size);
+      } else {
+        // Fall back to free_sized (which itself falls back to free)
+        free_sized(ptr, size);
+      }
+    }
+  }
+
   ALLOC8_ALWAYS_INLINE ALLOC8_MALLOC_ATTR ALLOC8_ALLOC_SIZE(2)
   static void* memalign(size_t alignment, size_t sz) {
     return getHeap()->memalign(alignment, sz);
