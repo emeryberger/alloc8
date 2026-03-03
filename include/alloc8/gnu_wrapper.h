@@ -53,6 +53,23 @@
 // These call getCustomHeap() directly for maximum inlining with LTO
 
 namespace alloc8_internal {
+  // SFINAE traits for optional allocator methods.
+  // Uses std::void_t instead of requires expressions to avoid GCC bugs
+  // with if constexpr + requires in template contexts.
+  template <typename T, typename = void>
+  struct has_free_sized : std::false_type {};
+  template <typename T>
+  struct has_free_sized<T, std::void_t<
+    decltype(std::declval<T&>().free_sized(std::declval<void*>(), std::declval<size_t>()))
+  >> : std::true_type {};
+
+  template <typename T, typename = void>
+  struct has_free_aligned_sized : std::false_type {};
+  template <typename T>
+  struct has_free_aligned_sized<T, std::void_t<
+    decltype(std::declval<T&>().free_aligned_sized(std::declval<void*>(), std::declval<size_t>(), std::declval<size_t>()))
+  >> : std::true_type {};
+
   inline void* do_malloc(size_t sz) {
     return getCustomHeap()->malloc(sz);
   }
@@ -61,34 +78,22 @@ namespace alloc8_internal {
     getCustomHeap()->free(ptr);
   }
 
-  // Template struct to make requires expressions dependent on HeapType,
-  // which avoids GCC bugs with requires in non-template inline functions.
-  template <typename HeapType>
-  struct free_dispatch {
-    static void sized(void* ptr, size_t sz) {
-      if constexpr (requires(HeapType& h, void* p, size_t s) { h.free_sized(p, s); }) {
-        getCustomHeap()->free_sized(ptr, sz);
-      } else {
-        getCustomHeap()->free(ptr);
-      }
-    }
-    static void aligned_sized(void* ptr, size_t alignment, size_t sz) {
-      if constexpr (requires(HeapType& h, void* p, size_t a, size_t s) { h.free_aligned_sized(p, a, s); }) {
-        getCustomHeap()->free_aligned_sized(ptr, alignment, sz);
-      } else {
-        sized(ptr, sz);
-      }
-    }
-  };
-
   inline void do_free_sized(void* ptr, size_t sz) {
     using HeapType = std::remove_pointer_t<decltype(getCustomHeap())>;
-    free_dispatch<HeapType>::sized(ptr, sz);
+    if constexpr (has_free_sized<HeapType>::value) {
+      getCustomHeap()->free_sized(ptr, sz);
+    } else {
+      getCustomHeap()->free(ptr);
+    }
   }
 
   inline void do_free_aligned_sized(void* ptr, size_t alignment, size_t sz) {
     using HeapType = std::remove_pointer_t<decltype(getCustomHeap())>;
-    free_dispatch<HeapType>::aligned_sized(ptr, alignment, sz);
+    if constexpr (has_free_aligned_sized<HeapType>::value) {
+      getCustomHeap()->free_aligned_sized(ptr, alignment, sz);
+    } else {
+      do_free_sized(ptr, sz);
+    }
   }
 
   inline void* do_memalign(size_t alignment, size_t sz) {
