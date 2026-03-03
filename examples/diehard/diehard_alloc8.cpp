@@ -103,6 +103,14 @@ public:
     return TheDieHardHeap::malloc(sz < alignment ? alignment : sz);
   }
 
+  // Sized free: size info is available from C23 free_sized / C++14 sized delete.
+  // DieHard could use the size to compute the size class index directly (O(1))
+  // instead of the linear search through all size classes. For now, delegate
+  // to the regular free path which handles the search internally.
+  inline void free_sized(void* ptr, size_t) {
+    TheDieHardHeap::free(ptr);
+  }
+
   // Fork safety - scalable version has per-thread heaps, no global lock
   inline void lock() {
 #if !DIEHARD_SCALABLE
@@ -178,6 +186,15 @@ void* xxcalloc(size_t count, size_t sz) {
     memset(ptr, 0, totalSize);
   }
   return ptr;
+}
+
+void xxfree_sized(void* ptr, size_t sz) {
+  getCustomHeap()->free_sized(ptr, sz);
+}
+
+void xxfree_aligned_sized(void* ptr, size_t, size_t sz) {
+  // DieHard uses power-of-two sizes, alignment doesn't affect free path
+  getCustomHeap()->free_sized(ptr, sz);
 }
 
 } // extern "C"

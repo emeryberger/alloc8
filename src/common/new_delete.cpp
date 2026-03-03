@@ -13,6 +13,8 @@ extern "C" {
   void* xxmalloc(size_t);
   void  xxfree(void*);
   void* xxmemalign(size_t, size_t);
+  void  xxfree_sized(void*, size_t);
+  void  xxfree_aligned_sized(void*, size_t, size_t);
 }
 
 // ─── THROWING VARIANTS ────────────────────────────────────────────────────────
@@ -65,12 +67,12 @@ ALLOC8_EXPORT void operator delete[](void* ptr, const std::nothrow_t&) noexcept 
 
 #if defined(__cpp_sized_deallocation) && __cpp_sized_deallocation >= 201309L
 
-ALLOC8_EXPORT void operator delete(void* ptr, std::size_t) noexcept {
-  if (ptr) xxfree(ptr);
+ALLOC8_EXPORT void operator delete(void* ptr, std::size_t sz) noexcept {
+  if (ptr) xxfree_sized(ptr, sz);
 }
 
-ALLOC8_EXPORT void operator delete[](void* ptr, std::size_t) noexcept {
-  if (ptr) xxfree(ptr);
+ALLOC8_EXPORT void operator delete[](void* ptr, std::size_t sz) noexcept {
+  if (ptr) xxfree_sized(ptr, sz);
 }
 
 #endif // sized deallocation
@@ -122,12 +124,12 @@ ALLOC8_EXPORT void operator delete[](void* ptr, std::align_val_t, const std::not
 // Sized + aligned delete
 #if defined(__cpp_sized_deallocation) && __cpp_sized_deallocation >= 201309L
 
-ALLOC8_EXPORT void operator delete(void* ptr, std::size_t, std::align_val_t) noexcept {
-  if (ptr) xxfree(ptr);
+ALLOC8_EXPORT void operator delete(void* ptr, std::size_t sz, std::align_val_t al) noexcept {
+  if (ptr) xxfree_aligned_sized(ptr, static_cast<std::size_t>(al), sz);
 }
 
-ALLOC8_EXPORT void operator delete[](void* ptr, std::size_t, std::align_val_t) noexcept {
-  if (ptr) xxfree(ptr);
+ALLOC8_EXPORT void operator delete[](void* ptr, std::size_t sz, std::align_val_t al) noexcept {
+  if (ptr) xxfree_aligned_sized(ptr, static_cast<std::size_t>(al), sz);
 }
 
 #endif // sized + aligned

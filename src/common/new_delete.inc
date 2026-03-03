@@ -8,7 +8,7 @@
 #include <new>
 #include <cstdlib>
 
-// Expects xxmalloc, xxfree, xxmemalign to be declared
+// Expects xxmalloc, xxfree, xxmemalign, xxfree_sized, xxfree_aligned_sized to be declared
 
 // ─── THROWING VARIANTS ────────────────────────────────────────────────────────
 
@@ -69,13 +69,13 @@ void operator delete[](void* ptr, const std::nothrow_t&) noexcept {
 #if defined(__cpp_sized_deallocation) && __cpp_sized_deallocation >= 201309L
 
 ATTRIBUTE_EXPORT __attribute__((flatten))
-void operator delete(void* ptr, std::size_t) noexcept {
-  if (ptr) xxfree(ptr);
+void operator delete(void* ptr, std::size_t sz) noexcept {
+  if (ptr) xxfree_sized(ptr, sz);
 }
 
 ATTRIBUTE_EXPORT __attribute__((flatten))
-void operator delete[](void* ptr, std::size_t) noexcept {
-  if (ptr) xxfree(ptr);
+void operator delete[](void* ptr, std::size_t sz) noexcept {
+  if (ptr) xxfree_sized(ptr, sz);
 }
 
 #endif
@@ -136,13 +136,13 @@ void operator delete[](void* ptr, std::align_val_t, const std::nothrow_t&) noexc
 #if defined(__cpp_sized_deallocation) && __cpp_sized_deallocation >= 201309L
 
 ATTRIBUTE_EXPORT __attribute__((flatten))
-void operator delete(void* ptr, std::size_t, std::align_val_t) noexcept {
-  if (ptr) xxfree(ptr);
+void operator delete(void* ptr, std::size_t sz, std::align_val_t al) noexcept {
+  if (ptr) xxfree_aligned_sized(ptr, static_cast<std::size_t>(al), sz);
 }
 
 ATTRIBUTE_EXPORT __attribute__((flatten))
-void operator delete[](void* ptr, std::size_t, std::align_val_t) noexcept {
-  if (ptr) xxfree(ptr);
+void operator delete[](void* ptr, std::size_t sz, std::align_val_t al) noexcept {
+  if (ptr) xxfree_aligned_sized(ptr, static_cast<std::size_t>(al), sz);
 }
 
 #endif // sized + aligned
