@@ -61,24 +61,34 @@ namespace alloc8_internal {
     getCustomHeap()->free(ptr);
   }
 
+  // Template struct to make requires expressions dependent on HeapType,
+  // which avoids GCC bugs with requires in non-template inline functions.
+  template <typename HeapType>
+  struct free_dispatch {
+    static void sized(void* ptr, size_t sz) {
+      if constexpr (requires(HeapType& h, void* p, size_t s) { h.free_sized(p, s); }) {
+        getCustomHeap()->free_sized(ptr, sz);
+      } else {
+        getCustomHeap()->free(ptr);
+      }
+    }
+    static void aligned_sized(void* ptr, size_t alignment, size_t sz) {
+      if constexpr (requires(HeapType& h, void* p, size_t a, size_t s) { h.free_aligned_sized(p, a, s); }) {
+        getCustomHeap()->free_aligned_sized(ptr, alignment, sz);
+      } else {
+        sized(ptr, sz);
+      }
+    }
+  };
+
   inline void do_free_sized(void* ptr, size_t sz) {
     using HeapType = std::remove_pointer_t<decltype(getCustomHeap())>;
-    if constexpr (requires(HeapType& h, void* p, size_t s) { h.free_sized(p, s); }) {
-      getCustomHeap()->free_sized(ptr, sz);
-    } else {
-      getCustomHeap()->free(ptr);
-    }
+    free_dispatch<HeapType>::sized(ptr, sz);
   }
 
   inline void do_free_aligned_sized(void* ptr, size_t alignment, size_t sz) {
     using HeapType = std::remove_pointer_t<decltype(getCustomHeap())>;
-    if constexpr (requires(HeapType& h, void* p, size_t a, size_t s) {
-      h.free_aligned_sized(p, a, s);
-    }) {
-      getCustomHeap()->free_aligned_sized(ptr, alignment, sz);
-    } else {
-      do_free_sized(ptr, sz);
-    }
+    free_dispatch<HeapType>::aligned_sized(ptr, alignment, sz);
   }
 
   inline void* do_memalign(size_t alignment, size_t sz) {
