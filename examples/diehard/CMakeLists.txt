@@ -6,6 +6,13 @@
 
 include(FetchContent)
 
+# Fetch Heap-Layers
+FetchContent_Declare(
+  HeapLayers
+  GIT_REPOSITORY https://github.com/emeryberger/Heap-Layers.git
+  GIT_TAG        master
+  GIT_SHALLOW    TRUE
+)
 # Check for local repos first
 set(LOCAL_HEAPLAYERS_DIR "" CACHE PATH "Local Heap-Layers directory (optional)")
 set(LOCAL_DIEHARD_DIR "" CACHE PATH "Local DieHard directory (optional)")

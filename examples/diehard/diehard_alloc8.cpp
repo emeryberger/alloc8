@@ -10,6 +10,8 @@
 #include <cassert>
 #include <cstring>
 
+// Workaround for DieHard upstream bug: printf_ is used but never defined
+#define printf_ printf
 // Required by printf.h/printf.cpp
 extern "C" void _putchar(char c) {
   fputc(c, stderr);
@@ -188,6 +190,9 @@ void* xxcalloc(size_t count, size_t sz) {
   return ptr;
 }
 
+// xxfree_sized and xxfree_aligned_sized are provided by macwrapper.cpp on macOS
+// (as weak symbols that call xxfree). On other platforms, we provide them here.
+#if !defined(__APPLE__)
 void xxfree_sized(void* ptr, size_t sz) {
   getCustomHeap()->free_sized(ptr, sz);
 }
@@ -196,6 +201,7 @@ void xxfree_aligned_sized(void* ptr, size_t, size_t sz) {
   // DieHard uses power-of-two sizes, alignment doesn't affect free path
   getCustomHeap()->free_sized(ptr, sz);
 }
+#endif
 
 } // extern "C"
 

@@ -4,25 +4,38 @@
 // This file provides pthread_create/pthread_exit interposition that calls
 // the allocator's xxthread_init/xxthread_cleanup hooks.
 //
-// Uses direct calls to __pthread_create/__pthread_exit to avoid dlsym
-// (which can call malloc internally, causing recursion).
+// Uses dlsym(RTLD_NEXT) to find the real pthread functions. The dlsym call
+// is deferred until after initialization to avoid malloc recursion.
 
 #ifndef __linux__
 #error "This file is for Linux only"
 #endif
 
 #include <pthread.h>
+#include <dlfcn.h>
 #include <atomic>
 #include <cstdlib>
 
 // ─── REAL PTHREAD FUNCTIONS ─────────────────────────────────────────────────
-// Direct declarations of glibc internal symbols - avoids dlsym which can malloc
+// Function pointer types and storage for real pthread functions
 
-extern "C" {
-  // glibc provides these as the "real" implementations
-  int __pthread_create(pthread_t*, const pthread_attr_t*,
-                       void* (*)(void*), void*);
-  void __pthread_exit(void*) __attribute__((__noreturn__));
+using pthread_create_fn = int (*)(pthread_t*, const pthread_attr_t*,
+                                   void* (*)(void*), void*);
+using pthread_exit_fn = void (*)(void*);
+
+static pthread_create_fn real_pthread_create = nullptr;
+static pthread_exit_fn real_pthread_exit = nullptr;
+
+static void init_real_pthread_funcs() {
+  static std::atomic<bool> initialized{false};
+  if (initialized.load(std::memory_order_acquire)) return;
+
+  real_pthread_create = reinterpret_cast<pthread_create_fn>(
+      dlsym(RTLD_NEXT, "pthread_create"));
+  real_pthread_exit = reinterpret_cast<pthread_exit_fn>(
+      dlsym(RTLD_NEXT, "pthread_exit"));
+
+  initialized.store(true, std::memory_order_release);
 }
 
 // ─── WEAK SYMBOL DETECTION ───────────────────────────────────────────────────
@@ -120,9 +133,11 @@ static int alloc8_pthread_create(
     void* (*start_routine)(void*),
     void* arg)
 {
+  init_real_pthread_funcs();
+
   // If not ready or no hooks, pass through to real pthread_create
   if (!pthread_hooks_ready() || !has_thread_hooks()) {
-    return __pthread_create(thread, attr, start_routine, arg);
+    return real_pthread_create(thread, attr, start_routine, arg);
   }
 
   // Mark that threads are being created (for lock optimization)
@@ -134,14 +149,14 @@ static int alloc8_pthread_create(
       xxmalloc(sizeof(ThreadWrapper)));
   if (!wrapper) {
     // Fall back to direct call if allocation fails
-    return __pthread_create(thread, attr, start_routine, arg);
+    return real_pthread_create(thread, attr, start_routine, arg);
   }
 
   wrapper->user_func = start_routine;
   wrapper->user_arg = arg;
 
   // Create thread with our trampoline
-  int result = __pthread_create(thread, attr, alloc8_thread_trampoline, wrapper);
+  int result = real_pthread_create(thread, attr, alloc8_thread_trampoline, wrapper);
 
   if (result != 0) {
     // Creation failed, free wrapper
@@ -154,13 +169,16 @@ static int alloc8_pthread_create(
 // Custom pthread_exit that calls cleanup hook
 static void alloc8_pthread_exit(void* value_ptr) __attribute__((__noreturn__));
 static void alloc8_pthread_exit(void* value_ptr) {
+  init_real_pthread_funcs();
+
   // Call cleanup hook if ready and provided
   if (pthread_hooks_ready() && &xxthread_cleanup != nullptr) {
     xxthread_cleanup();
   }
 
   // Call real pthread_exit (never returns)
-  __pthread_exit(value_ptr);
+  real_pthread_exit(value_ptr);
+  __builtin_unreachable();
 }
 
 // ─── STRONG SYMBOL ALIASING ─────────────────────────────────────────────────
