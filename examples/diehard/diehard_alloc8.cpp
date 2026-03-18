@@ -5,9 +5,13 @@
 
 #include <cstddef>
 #include <cstdlib>
+#include <cstdio>
 #include <new>
 #include <cassert>
 #include <cstring>
+
+// Workaround for DieHard upstream bug: printf_ is used but never defined
+#define printf_ printf
 
 // The heap multiplier
 enum { Numerator = 8, Denominator = 7 };
