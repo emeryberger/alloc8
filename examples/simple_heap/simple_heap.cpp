@@ -216,7 +216,6 @@ ALLOC8_REDIRECT(SimpleHeapRedirect);
 // ─── STATISTICS REPORTING ─────────────────────────────────────────────────────
 
 // Print stats at program exit
-__attribute__((destructor))
 static void printStats() {
   fprintf(stderr, "\n=== SimpleHeap Statistics ===\n");
   fprintf(stderr, "Total allocated: %zu bytes\n", g_totalAllocated.load());
@@ -228,3 +227,20 @@ static void printStats() {
   fprintf(stderr, "Free count:      %zu\n", g_freeCount.load());
   fprintf(stderr, "=============================\n");
 }
+
+// Register printStats to run at program exit
+#if defined(_WIN32)
+// Windows: Use DllMain or a static initializer
+namespace {
+  struct StatsPrinter {
+    ~StatsPrinter() { printStats(); }
+  };
+  static StatsPrinter g_statsPrinter;
+}
+#else
+// Unix: Use constructor attribute to register atexit handler
+__attribute__((constructor))
+static void registerPrintStats() {
+  atexit(printStats);
+}
+#endif

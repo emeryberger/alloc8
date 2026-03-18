@@ -70,6 +70,14 @@
     ALLOC8_EXPORT void* xxcalloc(size_t count, size_t sz) { \
       return HeapRedirectType::calloc(count, sz); \
     } \
+    \
+    ALLOC8_EXPORT void xxfree_sized(void* ptr, size_t sz) { \
+      HeapRedirectType::free_sized(ptr, sz); \
+    } \
+    \
+    ALLOC8_EXPORT void xxfree_aligned_sized(void* ptr, size_t alignment, size_t sz) { \
+      HeapRedirectType::free_aligned_sized(ptr, alignment, sz); \
+    } \
   }
 
 // ─── THREAD REDIRECT MACRO ────────────────────────────────────────────────────
@@ -150,18 +158,22 @@
 // Platform wrappers include this header and call these.
 
 extern "C" {
-  void* xxmalloc(size_t sz);
-  void  xxfree(void* ptr);
-  void* xxmemalign(size_t alignment, size_t sz);
-  size_t xxmalloc_usable_size(void* ptr);
-  void xxmalloc_lock();
-  void xxmalloc_unlock();
-  void* xxrealloc(void* ptr, size_t sz);
-  void* xxcalloc(size_t count, size_t sz);
+  ALLOC8_EXPORT void* xxmalloc(size_t sz);
+  ALLOC8_EXPORT void  xxfree(void* ptr);
+  ALLOC8_EXPORT void* xxmemalign(size_t alignment, size_t sz);
+  ALLOC8_EXPORT size_t xxmalloc_usable_size(void* ptr);
+  ALLOC8_EXPORT void xxmalloc_lock();
+  ALLOC8_EXPORT void xxmalloc_unlock();
+  ALLOC8_EXPORT void* xxrealloc(void* ptr, size_t sz);
+  ALLOC8_EXPORT void* xxcalloc(size_t count, size_t sz);
+
+  // Sized free (C23 free_sized / C++14 sized delete)
+  ALLOC8_EXPORT void xxfree_sized(void* ptr, size_t sz);
+  ALLOC8_EXPORT void xxfree_aligned_sized(void* ptr, size_t alignment, size_t sz);
 
   // Thread hooks (optional - only if ALLOC8_THREAD_REDIRECT used)
-  void xxthread_init(void);
-  void xxthread_cleanup(void);
+  ALLOC8_EXPORT void xxthread_init(void);
+  ALLOC8_EXPORT void xxthread_cleanup(void);
 }
 
 // ─── USAGE INSTRUCTIONS ───────────────────────────────────────────────────────
@@ -175,6 +187,8 @@ extern "C" {
 //      - void unlock()
 //    Optional:
 //      - void* realloc(void* ptr, size_t sz)  // if not provided, default used
+//      - void free_sized(void* ptr, size_t sz)  // C23/C++14 sized free optimization
+//      - void free_aligned_sized(void* ptr, size_t align, size_t sz)  // C23/C++17 sized+aligned free
 //      - void threadInit()      // called when new thread starts
 //      - void threadCleanup()   // called when thread exits
 //

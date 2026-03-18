@@ -86,7 +86,7 @@ add_library(myalloc SHARED
 target_link_libraries(myalloc PRIVATE alloc8::interpose)
 ```
 
-### 4. Use with LD_PRELOAD
+### 4. Use with LD_PRELOAD / Detours
 
 ```bash
 # Linux
@@ -94,6 +94,9 @@ LD_PRELOAD=./libmyalloc.so ./my_program
 
 # macOS
 DYLD_INSERT_LIBRARIES=./libmyalloc.dylib ./my_program
+
+# Windows - DLL is loaded and hooks installed automatically via DllMain
+# Copy myalloc.dll to your application directory, or use withdll.exe from Detours
 ```
 
 ## Prefixed Mode
@@ -252,8 +255,13 @@ The `examples/diehard` directory shows how to integrate [DieHard](https://github
 
 **Build:**
 ```bash
+# Unix
 cmake .. -DALLOC8_BUILD_EXAMPLES=ON -DALLOC8_BUILD_DIEHARD_EXAMPLE=ON
 cmake --build .
+
+# Windows
+cmake .. -DALLOC8_BUILD_EXAMPLES=ON -DALLOC8_BUILD_DIEHARD_EXAMPLE=ON
+cmake --build . --config Release
 ```
 
 **Use:**
@@ -263,6 +271,8 @@ LD_PRELOAD=./examples/diehard/libdiehard_alloc8.so ./my_program
 
 # macOS
 DYLD_INSERT_LIBRARIES=./examples/diehard/libdiehard_alloc8.dylib ./my_program
+
+# Windows - output: examples/diehard/Release/diehard_alloc8.dll
 ```
 
 ### Hoard
@@ -271,8 +281,13 @@ The `examples/hoard` directory shows how to integrate [Hoard](https://github.com
 
 **Build:**
 ```bash
+# Unix
 cmake .. -DALLOC8_BUILD_EXAMPLES=ON -DALLOC8_BUILD_HOARD_EXAMPLE=ON
 cmake --build .
+
+# Windows
+cmake .. -DALLOC8_BUILD_EXAMPLES=ON -DALLOC8_BUILD_HOARD_EXAMPLE=ON
+cmake --build . --config Release
 ```
 
 **Use:**
@@ -280,8 +295,10 @@ cmake --build .
 # Linux
 LD_PRELOAD=./examples/hoard/libhoard_alloc8.so ./my_program
 
-# macOS
+# macOS (has timing issues - use Linux or Windows)
 DYLD_INSERT_LIBRARIES=./examples/hoard/libhoard_alloc8.dylib ./my_program
+
+# Windows - output: examples/hoard/Release/hoard_alloc8.dll
 ```
 
 ## CMake Options
@@ -308,9 +325,12 @@ DYLD_INSERT_LIBRARIES=./examples/hoard/libhoard_alloc8.dylib ./my_program
 - Fork safety via `_malloc_fork_*` interposition
 
 ### Windows
-- Uses [Microsoft Detours](https://github.com/microsoft/Detours)
-- Patches CRT modules dynamically
+- Uses [Microsoft Detours](https://github.com/microsoft/Detours) (auto-fetched via CMake)
+- Patches CRT modules dynamically via `DetourEnumerateModules`
 - Handles "foreign" pointers from pre-hook allocations
+- Thread hooks via `DllMain` `DLL_THREAD_ATTACH`/`DLL_THREAD_DETACH`
+- Supports ARM64 and x64 architectures
+- Define `ALLOC8_NO_DLLMAIN` to provide custom DllMain
 
 ## License
 

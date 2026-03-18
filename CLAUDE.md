@@ -12,25 +12,32 @@ Factored from patterns in Hoard, DieHard, and Scalene (all using Heap-Layers).
 # Configure with tests and examples
 cmake -B build -DALLOC8_BUILD_TESTS=ON -DALLOC8_BUILD_EXAMPLES=ON
 
-# Build
+# Build (Unix)
 cmake --build build
 
+# Build (Windows - specify Release config)
+cmake --build build --config Release
+
 # Run tests
-ctest --test-dir build
+ctest --test-dir build                    # Unix
+ctest --test-dir build -C Release         # Windows
 
 # Test interposition (macOS)
 DYLD_INSERT_LIBRARIES=build/examples/simple_heap/libsimple_heap.dylib ./build/tests/test_basic_alloc
 
 # Test interposition (Linux)
 LD_PRELOAD=build/examples/simple_heap/libsimple_heap.so ./build/tests/test_basic_alloc
+
+# Test interposition (Windows) - run any program, DLL hooks are installed automatically
+build\examples\simple_heap\Release\libsimple_heap.dll  # Copy to app directory or use withdll.exe
 ```
 
 ## Building DieHard/Hoard Examples
 
-Dependencies are automatically fetched via CMake FetchContent.
+Dependencies are automatically fetched via CMake FetchContent (or use local repos if available).
 
 ```bash
-# DieHard example - use GCC 11+ for best LTO performance
+# DieHard example - use GCC 11+ for best LTO performance (Linux)
 CXX=/opt/gcc-11/bin/g++ CC=/opt/gcc-11/bin/gcc cmake -B build \
   -DALLOC8_BUILD_EXAMPLES=ON -DALLOC8_BUILD_DIEHARD_EXAMPLE=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build
@@ -41,12 +48,20 @@ LD_PRELOAD=build/examples/diehard/libdiehard_alloc8.so ./test_program
 # Test DieHard (macOS)
 DYLD_INSERT_LIBRARIES=build/examples/diehard/libdiehard_alloc8.dylib ./test_program
 
-# Hoard example (working on Linux, has macOS init timing issues)
+# Hoard example (working on Linux and Windows, has macOS init timing issues)
 cmake -B build -DALLOC8_BUILD_EXAMPLES=ON -DALLOC8_BUILD_HOARD_EXAMPLE=ON
 cmake --build build
 
 # Test Hoard (Linux)
 LD_PRELOAD=build/examples/hoard/libhoard_alloc8.so ./test_program
+
+# Windows build (DieHard and Hoard)
+cmake -B build -DALLOC8_BUILD_EXAMPLES=ON -DALLOC8_BUILD_DIEHARD_EXAMPLE=ON -DALLOC8_BUILD_HOARD_EXAMPLE=ON
+cmake --build build --config Release
+
+# Output DLLs:
+#   build/examples/diehard/Release/diehard_alloc8.dll
+#   build/examples/hoard/Release/hoard_alloc8.dll
 ```
 
 ### DieHard Zero-Overhead Build
@@ -80,6 +95,7 @@ Performance comparison (threadtest, 8 threads, 1000 iterations, 8000 objects):
 | Linux | `include/alloc8/gnu_wrapper.h` | Header-only (zero-overhead) |
 | macOS | `src/platform/macos/mac_wrapper.cpp` | `__DATA,__interpose` section |
 | Windows | `src/platform/windows/win_wrapper_detours.cpp` | Microsoft Detours |
+| Windows | `src/platform/windows/alloc8_redirect.cpp` | IAT patching (zero-overhead) |
 
 ### Thread Interposition
 
@@ -87,6 +103,7 @@ Performance comparison (threadtest, 8 threads, 1000 iterations, 8000 objects):
 |----------|------|-----------|
 | Linux | `src/platform/linux/linux_threads.cpp` | Strong symbol aliasing for pthread_create/pthread_exit |
 | macOS | `src/platform/macos/mac_threads.cpp` | Interpose pthread functions |
+| Windows | `src/platform/windows/win_threads.cpp` | DllMain DLL_THREAD_ATTACH/DETACH notifications |
 
 ### xxmalloc Interface
 
@@ -98,6 +115,8 @@ The bridge between platform wrappers and user allocators:
 - `xxmalloc_lock()` / `xxmalloc_unlock()` - Fork safety
 - `xxrealloc(void*, size_t)` - Reallocation
 - `xxcalloc(size_t, size_t)` - Zeroed allocation
+- `xxfree_sized(void*, size_t)` - Sized free (C23/C++14, falls back to `xxfree`)
+- `xxfree_aligned_sized(void*, size_t, size_t)` - Sized+aligned free (C23/C++14+17, falls back to `xxfree_sized`)
 
 ### xxthread Interface (Optional)
 
@@ -125,9 +144,18 @@ For thread-aware allocators:
 - For zero-overhead: Use `gnu_wrapper.h` with GCC 11+ and full LTO
 
 ### Windows Specifics
+- Two interposition mechanisms available (see `docs/windows-interposition.md`):
+  - **Detours** (default): Inline hooking, catches all calls, ~11ns overhead per call
+  - **alloc8-redirect**: IAT patching at load time, 2.4x faster, zero per-call overhead
 - Microsoft Detours fetched via CMake FetchContent
 - Must handle "foreign" pointers allocated before hooks installed
 - Uses SEH for safe foreign pointer detection
+- Thread hooks via DllMain `DLL_THREAD_ATTACH`/`DLL_THREAD_DETACH` notifications
+- Define `ALLOC8_NO_DLLMAIN` if providing your own DllMain (call `InitializeAlloc8()` manually)
+- Uses `TlsAlloc`/`TlsGetValue`/`TlsSetValue` for thread-local storage
+- Exports `InitializeAlloc8()` and `FinalizeAlloc8()` for manual initialization
+- ARM64 and x64 architectures supported
+- `new_delete.cpp` excluded on Windows (handled by Detours)
 
 ## Common Issues and Solutions
 
@@ -155,6 +183,11 @@ For thread-aware allocators:
 **Problem:** SIGBUS (exit code 138) outside debugger, works under lldb.
 **Cause:** Timing-dependent initialization race condition.
 **Status:** Known issue with Hoard example on macOS. Works fine on Linux.
+
+### 7. MSVC LTO Causes 6x Slowdown (Windows ARM64)
+**Problem:** Memory allocator is 6x slower than expected on ARM64 Windows with `/GL` and `/LTCG`.
+**Cause:** MSVC's ARM64 LTO codegen produces suboptimal code for interleaved malloc/free patterns.
+**Solution:** Disable `/GL` compiler flag and `/LTCG` linker flag. Also disable CMake's `CMAKE_INTERPROCEDURAL_OPTIMIZATION` on Windows. See "Windows Performance Debugging" section for details.
 
 ## Integration Patterns
 
@@ -362,11 +395,14 @@ alloc8/
 │       ├── macos/
 │       │   ├── mac_wrapper.cpp     # Includes mac_zones.cpp
 │       │   └── mac_threads.cpp     # Thread lifecycle hooks
-│       └── windows/win_wrapper_detours.cpp
+│       └── windows/
+│           ├── win_wrapper_detours.cpp  # Microsoft Detours interposition
+│           └── win_threads.cpp          # Thread lifecycle hooks via DllMain
 ├── examples/
 │   ├── simple_heap/         # Basic example with statistics
-│   ├── diehard/             # DieHard integration (working)
-│   └── hoard/               # Hoard integration (working on Linux)
+│   ├── diehard/             # DieHard integration (Linux, macOS, Windows)
+│   └── hoard/               # Hoard integration (Linux, Windows)
+│       └── hoard_thread_hooks_win.cpp   # Windows-specific TLS management
 └── tests/
 ```
 
@@ -383,6 +419,8 @@ alloc8/
    nm -gU libmyalloc.dylib | grep malloc
    # Linux
    nm -D libmyalloc.so | grep malloc
+   # Windows
+   dumpbin /exports myalloc.dll | findstr malloc
    ```
 
 3. **Debug with lldb/gdb:**
@@ -400,6 +438,128 @@ alloc8/
    ```
 
 5. **If works in debugger but not standalone:** Likely initialization timing issue.
+
+6. **Windows: Check DLL dependencies:**
+   ```cmd
+   dumpbin /dependents myalloc.dll
+   ```
+
+7. **Windows: Verify DLL architecture:**
+   ```bash
+   file myalloc.dll
+   # Should show: PE32+ executable (DLL) ... Aarch64 or x86-64
+   ```
+
+## Verifying Allocator Interposition
+
+To confirm your custom allocator is actually being used (not the system allocator):
+
+1. **Init-time logging**: Add a printf/OutputDebugString in DllMain or allocator constructor:
+   ```cpp
+   // In DLL_PROCESS_ATTACH or allocator init
+   fprintf(stderr, "MyAllocator: Memory allocator active\n");
+   ```
+
+2. **Use simple_heap with statistics**: The simple_heap example tracks allocation counts. Run your test and check the counters.
+
+3. **Debugger breakpoints**: Set breakpoint on `xxmalloc` and run. If it's hit, interposition is working.
+
+4. **Check symbol exports**:
+   ```bash
+   # Windows
+   dumpbin /exports myalloc.dll | findstr malloc
+   # Linux
+   nm -D libmyalloc.so | grep " T.*malloc"
+   ```
+
+5. **Distinctive pointer patterns**: Allocators like DieHard use randomized placement. Check if returned pointers differ significantly from system malloc patterns.
+
+## Windows Performance Debugging
+
+### C++ Library Initialization Hack
+
+On Windows with Detours, hooks must be installed AFTER C++ library initialization to prevent heap corruption. Use this pattern from Hoard:
+
+```cpp
+// In DLL_PROCESS_ATTACH, BEFORE InitializeAlloc8():
+#include <iostream>
+std::cout << "";  // Forces C++ library init
+
+// Now safe to install hooks
+InitializeAlloc8();
+```
+
+Without this, the Windows heap and custom heap pointers get mixed up, causing crashes or corruption.
+
+### TLS Access Optimization
+
+Hot paths must minimize TLS lookups. The optimal pattern:
+
+```cpp
+// GOOD: Single TLS lookup
+TheCustomHeapType * getCustomHeap() {
+  if (!g_tlsReady) { return nullptr; }  // Fast early check
+  auto p = TlsGetValue(LocalTLABIndex);
+  if (p == NULL) {
+    initializeCustomHeap();
+    p = TlsGetValue(LocalTLABIndex);
+  }
+  return (TheCustomHeapType *) p;
+}
+
+void* xxmalloc(size_t sz) {
+  auto* heap = getCustomHeap();
+  if (heap) { return heap->malloc(sz); }
+  // ... init buffer fallback
+}
+
+// BAD: Double TLS lookup (2x overhead)
+void* xxmalloc(size_t sz) {
+  if (isCustomHeapInitialized()) {  // 1st TLS lookup
+    return getCustomHeap()->malloc(sz);  // 2nd TLS lookup
+  }
+  // ...
+}
+```
+
+### Windows TLS Best Practices
+
+- Use `TlsAlloc()` explicitly - don't assume any default index
+- Track TLS readiness with a global flag (`g_tlsReady`)
+- Call `TlsFree()` in `DLL_PROCESS_DETACH` for clean unload
+- Check `LocalTLABIndex != TLS_OUT_OF_INDEXES` before any TLS operations
+
+### SEH Overhead
+
+Windows Detours uses SEH (Structured Exception Handling) to detect "foreign pointers" - allocations made before hooks were installed. This adds overhead but is necessary for correctness.
+
+### MSVC LTO Causes 6x Slowdown on ARM64
+
+**Critical:** MSVC's whole-program optimization (`/GL`) and link-time code generation (`/LTCG`) cause a **6x performance regression** on ARM64 Windows for memory allocator workloads.
+
+Benchmarks (threadtest 4 threads, 40000 iterations, 1000 objects):
+- With LTO (`/GL` + `/LTCG`): 0.57s (2.5x slower than native malloc)
+- Without LTO: 0.16s (1.4x faster than native malloc)
+
+The issue appears to be in MSVC's ARM64 LTO codegen producing suboptimal code for interleaved malloc/free patterns typical of memory allocator usage.
+
+**Solution:** Disable `/GL` and `/LTCG` on Windows builds:
+```cmake
+# Do NOT use these on Windows ARM64:
+# set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /GL")
+# set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /LTCG")
+
+# Also disable CMake's IPO on Windows:
+if(NOT WIN32)
+  include(CheckIPOSupported)
+  check_ipo_supported(RESULT ipo_supported)
+  if(ipo_supported)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+  endif()
+endif()
+```
+
+Note: LTO works fine on Linux/macOS with GCC/Clang. This issue is specific to MSVC on ARM64.
 
 ## API Reference
 

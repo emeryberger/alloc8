@@ -5,6 +5,14 @@ project(alloc8
   DESCRIPTION "Generic allocator interposition library"
 )
 
+# ─── DEFAULT BUILD TYPE ───────────────────────────────────────────────────────
+# Default to Release build for optimal performance
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  message(STATUS "Setting build type to 'Release' as none was specified.")
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+  set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
+endif()
+
 # ─── OPTIONS ───────────────────────────────────────────────────────────────────
 option(ALLOC8_BUILD_TESTS "Build alloc8 tests" OFF)
 option(ALLOC8_BUILD_EXAMPLES "Build alloc8 examples" OFF)
@@ -59,10 +67,17 @@ target_include_directories(alloc8_headers INTERFACE
 target_compile_features(alloc8_headers INTERFACE cxx_std_20)
 
 # ─── COMMON WRAPPER LIBRARY (OBJECT) ───────────────────────────────────────────
-add_library(alloc8_common OBJECT
-  src/common/wrapper_common.cpp
-  src/common/new_delete.cpp
-)
+# On Windows, operator new/delete are hooked via Detours, not by redefining them
+if(WIN32)
+  add_library(alloc8_common OBJECT
+    src/common/wrapper_common.cpp
+  )
+else()
+  add_library(alloc8_common OBJECT
+    src/common/wrapper_common.cpp
+    src/common/new_delete.cpp
+  )
+endif()
 target_link_libraries(alloc8_common PUBLIC alloc8_headers)
 set_target_properties(alloc8_common PROPERTIES
   POSITION_INDEPENDENT_CODE ON
@@ -168,6 +183,19 @@ elseif(ALLOC8_PLATFORM_WINDOWS)
       target_include_directories(detours_lib PUBLIC ${DETOURS_SRC_DIR})
       target_compile_definitions(detours_lib PRIVATE WIN32_LEAN_AND_MEAN)
       add_library(Detours::Detours ALIAS detours_lib)
+
+      # Build Detours utilities (withdll.exe, setdll.exe)
+      set(DETOURS_SAMPLES_DIR ${detours_SOURCE_DIR}/samples)
+
+      # withdll.exe - run a process with a DLL injected
+      add_executable(withdll ${DETOURS_SAMPLES_DIR}/withdll/withdll.cpp)
+      target_link_libraries(withdll PRIVATE detours_lib)
+      target_compile_definitions(withdll PRIVATE WIN32_LEAN_AND_MEAN)
+
+      # setdll.exe - add/remove DLL from PE import table
+      add_executable(setdll ${DETOURS_SAMPLES_DIR}/setdll/setdll.cpp)
+      target_link_libraries(setdll PRIVATE detours_lib)
+      target_compile_definitions(setdll PRIVATE WIN32_LEAN_AND_MEAN)
     endif()
 
     set(ALLOC8_INTERPOSE_SOURCES
@@ -180,6 +208,12 @@ elseif(ALLOC8_PLATFORM_WINDOWS)
       CACHE INTERNAL "Platform interpose sources"
     )
   endif()
+
+  # Thread lifecycle hooks for Windows - uses DllMain integration
+  set(ALLOC8_THREAD_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/win_threads.cpp
+    CACHE INTERNAL "Optional thread interposition sources"
+  )
 
   set(ALLOC8_COMMON_SOURCES
     $<TARGET_OBJECTS:alloc8_common>

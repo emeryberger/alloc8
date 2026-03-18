@@ -17,17 +17,17 @@ Status and plans for the alloc8 allocator interposition library.
 | C++17 aligned new/delete | Done | Done | Done |
 | malloc_zone_t support | N/A | Done | N/A |
 | Prefixed mode | Done | Done | Done |
-| Thread lifecycle hooks | Done | Done | Planned |
+| Thread lifecycle hooks | Done | Done | Done |
 | ThreadRedirect template | Done | Done | Done |
 | Header-only gnu_wrapper.h | Done | N/A | N/A |
 
 ### Examples
 
-| Example | Status | Notes |
-|---------|--------|-------|
-| simple_heap | Working | Basic mmap-based allocator with stats |
-| DieHard | Working | Zero-overhead with gnu_wrapper.h + LTO |
-| Hoard | Working | Uses alloc8 thread hooks for TLAB support |
+| Example | Linux | macOS | Windows | Notes |
+|---------|-------|-------|---------|-------|
+| simple_heap | Working | Working | Working | Basic mmap-based allocator with stats |
+| DieHard | Working | Working | Working | Zero-overhead with gnu_wrapper.h + LTO on Linux. Windows uses Detours. |
+| Hoard | Working | Has issues | Working | Uses alloc8 thread hooks for TLAB support. macOS has init timing issues. |
 
 ## Roadmap
 
@@ -53,11 +53,10 @@ Status and plans for the alloc8 allocator interposition library.
   - Enables full inlining with LTO
   - Used by DieHard example for parity with original
 
-- [ ] **Windows thread hooks** (`src/platform/windows/win_threads.cpp`)
-  - Hook CreateThread/ExitThread via Detours
-  - Use FlsAlloc/FlsCallback for thread cleanup (more reliable than DLL_THREAD_DETACH)
-  - Support both native threads and pthread-win32
-  - Consider using TLS callbacks as alternative
+- [x] **Windows thread hooks** (`src/platform/windows/win_threads.cpp`)
+  - Uses DLL_THREAD_ATTACH/DLL_THREAD_DETACH via DllMain (simpler than hooking CreateThread)
+  - Provides `Alloc8OnThreadAttach()` and `Alloc8OnThreadDetach()` for allocator integration
+  - Works with Detours-based malloc interposition
 
 - [ ] **Test suite expansion**
   - Thread safety stress tests (multi-threaded malloc/free)
@@ -65,6 +64,17 @@ Status and plans for the alloc8 allocator interposition library.
   - Alignment edge cases (memalign, posix_memalign, aligned_alloc)
   - Large allocation tests (>4GB on 64-bit)
   - Cross-thread free tests (alloc on thread A, free on thread B)
+
+- [ ] **Optimize Hoard Windows TLS access** (performance investigation)
+  - Investigate why alloc8 Hoard shows different perf characteristics than standalone
+  - Eliminate redundant `isCustomHeapInitialized()` + `getCustomHeap()` pattern if present
+  - Target: single TLS lookup per allocation (match standalone Hoard pattern)
+  - Files: `examples/hoard/hoard_alloc8.cpp`, `hoard_thread_hooks_win.cpp`
+
+- [ ] **Add allocator verification infrastructure**
+  - Statistics tracking (alloc count, free count, bytes allocated)
+  - Init-time logging to confirm interposition active
+  - Method to verify allocations coming from custom heap vs system
 
 ### Medium Priority
 
@@ -117,6 +127,10 @@ Status and plans for the alloc8 allocator interposition library.
 1. **CRT module enumeration**: Foreign pointer detection depends on correctly identifying all CRT modules.
 
 2. **32-bit vs 64-bit**: Detours patterns differ slightly between architectures.
+
+3. **C++ library initialization timing**: On Windows, Detours hooks must be installed AFTER C++ library initialization to avoid heap mix-up. Use the `cout << ""` hack (from Hoard) or similar to force C++ init before calling `InitializeAlloc8()`.
+
+4. **TLS access optimization**: Hot paths must minimize TLS lookups. Pattern: single `getCustomHeap()` call that returns nullptr if not ready, avoiding separate `isCustomHeapInitialized()` checks.
 
 ## Design Decisions
 

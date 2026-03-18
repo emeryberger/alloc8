@@ -37,6 +37,7 @@
 #include <pthread.h>
 #include <limits.h>
 #include <new>
+#include <type_traits>
 
 #include "platform.h"
 
@@ -52,12 +53,46 @@
 // These call getCustomHeap() directly for maximum inlining with LTO
 
 namespace alloc8_internal {
+  // SFINAE dispatch via overload resolution.
+  // The int/long overload trick ensures the more specific version (SFINAE on
+  // decltype) is preferred when valid, with fallback chosen otherwise.
+  // This avoids GCC bugs with requires expressions and if constexpr.
+  namespace detail {
+    template <typename H>
+    inline auto call_free_sized(H* heap, void* ptr, size_t sz, int)
+      -> decltype(heap->free_sized(ptr, sz)) {
+      return heap->free_sized(ptr, sz);
+    }
+    template <typename H>
+    inline void call_free_sized(H* heap, void* ptr, size_t, long) {
+      heap->free(ptr);
+    }
+
+    template <typename H>
+    inline auto call_free_aligned_sized(H* heap, void* ptr, size_t alignment, size_t sz, int)
+      -> decltype(heap->free_aligned_sized(ptr, alignment, sz)) {
+      return heap->free_aligned_sized(ptr, alignment, sz);
+    }
+    template <typename H>
+    inline void call_free_aligned_sized(H* heap, void* ptr, size_t, size_t sz, long) {
+      call_free_sized(heap, ptr, sz, 0);
+    }
+  }
+
   inline void* do_malloc(size_t sz) {
     return getCustomHeap()->malloc(sz);
   }
 
   inline void do_free(void* ptr) {
     getCustomHeap()->free(ptr);
+  }
+
+  inline void do_free_sized(void* ptr, size_t sz) {
+    detail::call_free_sized(getCustomHeap(), ptr, sz, 0);
+  }
+
+  inline void do_free_aligned_sized(void* ptr, size_t alignment, size_t sz) {
+    detail::call_free_aligned_sized(getCustomHeap(), ptr, alignment, sz, 0);
   }
 
   inline void* do_memalign(size_t alignment, size_t sz) {
@@ -152,6 +187,20 @@ extern "C" ALLOC8_WRAPPER_EXPORT size_t malloc_usable_size(void* ptr) __THROW {
 extern "C" ALLOC8_WRAPPER_EXPORT void cfree(void* ptr) __THROW {
   if (ALLOC8_LIKELY(ptr != nullptr)) {
     alloc8_internal::do_free(ptr);
+  }
+}
+
+// ─── C23 SIZED FREE ──────────────────────────────────────────────────────────
+
+extern "C" ALLOC8_WRAPPER_EXPORT void free_sized(void* ptr, size_t sz) __THROW {
+  if (ALLOC8_LIKELY(ptr != nullptr)) {
+    alloc8_internal::do_free_sized(ptr, sz);
+  }
+}
+
+extern "C" ALLOC8_WRAPPER_EXPORT void free_aligned_sized(void* ptr, size_t alignment, size_t sz) __THROW {
+  if (ALLOC8_LIKELY(ptr != nullptr)) {
+    alloc8_internal::do_free_aligned_sized(ptr, alignment, sz);
   }
 }
 
@@ -285,12 +334,12 @@ void operator delete[](void* ptr, const std::nothrow_t&) noexcept {
   if (ptr) alloc8_internal::do_free(ptr);
 }
 
-void operator delete(void* ptr, size_t) noexcept {
-  if (ptr) alloc8_internal::do_free(ptr);
+void operator delete(void* ptr, size_t sz) noexcept {
+  if (ptr) alloc8_internal::do_free_sized(ptr, sz);
 }
 
-void operator delete[](void* ptr, size_t) noexcept {
-  if (ptr) alloc8_internal::do_free(ptr);
+void operator delete[](void* ptr, size_t sz) noexcept {
+  if (ptr) alloc8_internal::do_free_sized(ptr, sz);
 }
 
 // C++17 aligned new/delete
@@ -326,10 +375,10 @@ void operator delete[](void* ptr, std::align_val_t) noexcept {
   if (ptr) alloc8_internal::do_free(ptr);
 }
 
-void operator delete(void* ptr, size_t, std::align_val_t) noexcept {
-  if (ptr) alloc8_internal::do_free(ptr);
+void operator delete(void* ptr, size_t sz, std::align_val_t al) noexcept {
+  if (ptr) alloc8_internal::do_free_aligned_sized(ptr, static_cast<size_t>(al), sz);
 }
 
-void operator delete[](void* ptr, size_t, std::align_val_t) noexcept {
-  if (ptr) alloc8_internal::do_free(ptr);
+void operator delete[](void* ptr, size_t sz, std::align_val_t al) noexcept {
+  if (ptr) alloc8_internal::do_free_aligned_sized(ptr, static_cast<size_t>(al), sz);
 }

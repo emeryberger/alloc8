@@ -117,6 +117,8 @@ TEST(malloc_many_small) {
   }
 }
 
+#if !defined(_WIN32)
+// posix_memalign is not available on Windows
 TEST(memalign_basic) {
   void* p = nullptr;
   int result = posix_memalign(&p, 64, 100);
@@ -134,6 +136,22 @@ TEST(memalign_page) {
   assert(((size_t)p % 4096) == 0);
   free(p);
 }
+#else
+// Windows: Use _aligned_malloc instead
+TEST(memalign_basic) {
+  void* p = _aligned_malloc(100, 64);
+  assert(p != nullptr);
+  assert(((size_t)p % 64) == 0);
+  _aligned_free(p);
+}
+
+TEST(memalign_page) {
+  void* p = _aligned_malloc(4096, 4096);
+  assert(p != nullptr);
+  assert(((size_t)p % 4096) == 0);
+  _aligned_free(p);
+}
+#endif
 
 TEST(strdup_basic) {
   const char* original = "Hello, World!";
