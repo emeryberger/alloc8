@@ -642,12 +642,16 @@ void replace_malloc_zone_free(malloc_zone_t*, void* ptr) {
 
 void replace_malloc_zone_free_definite_size(malloc_zone_t*, void* ptr, size_t sz) {
   if (!ptr) return;
+  // Foreign pointers go straight to their libSystem zone — we never owned them.
   if (malloc_zone_t* z = libsystem_zone_for(ptr)) {
     if (z->free_definite_size) z->free_definite_size(z, ptr, sz);
     else z->free(z, ptr);
     return;
   }
-  xxfree(ptr);
+  // Ours: pass the size hint through so allocators that implement free_sized
+  // can use the O(1) path; xxfree_sized falls back to xxfree internally.
+  forget_size(ptr);
+  xxfree_sized(ptr, sz);
 }
 
 // ─── ZONE BATCH OPERATIONS ────────────────────────────────────────────────────

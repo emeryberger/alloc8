@@ -27,6 +27,8 @@ extern "C" {
   void* xxcalloc(size_t count, size_t size);
   void* xxrealloc(void* ptr, size_t sz);
   size_t xxmalloc_usable_size(void* ptr);
+  void xxfree_sized(void* ptr, size_t sz);
+  void xxfree_aligned_sized(void* ptr, size_t alignment, size_t sz);
 }
 
 // alloc8-redirect API

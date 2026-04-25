@@ -5,6 +5,14 @@ project(alloc8
   DESCRIPTION "Generic allocator interposition library"
 )
 
+# ─── DEFAULT BUILD TYPE ───────────────────────────────────────────────────────
+# Default to Release build for optimal performance
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  message(STATUS "Setting build type to 'Release' as none was specified.")
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+  set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
+endif()
+
 # ─── OPTIONS ───────────────────────────────────────────────────────────────────
 option(ALLOC8_BUILD_TESTS "Build alloc8 tests" OFF)
 option(ALLOC8_BUILD_EXAMPLES "Build alloc8 examples" OFF)

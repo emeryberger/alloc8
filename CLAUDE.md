@@ -115,6 +115,8 @@ The bridge between platform wrappers and user allocators:
 - `xxmalloc_lock()` / `xxmalloc_unlock()` - Fork safety
 - `xxrealloc(void*, size_t)` - Reallocation
 - `xxcalloc(size_t, size_t)` - Zeroed allocation
+- `xxfree_sized(void*, size_t)` - Sized free (C23/C++14, falls back to `xxfree`)
+- `xxfree_aligned_sized(void*, size_t, size_t)` - Sized+aligned free (C23/C++14+17, falls back to `xxfree_sized`)
 
 ### xxthread Interface (Optional)
 

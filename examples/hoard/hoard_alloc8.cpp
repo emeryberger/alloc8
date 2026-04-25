@@ -220,4 +220,14 @@ ALLOC8_EXPORT void* xxcalloc(size_t count, size_t size) {
   return ptr;
 }
 
+ALLOC8_EXPORT void xxfree_sized(void* ptr, size_t) {
+  // Hoard could use the size to skip the modulo-based size computation
+  // in the free path. For now, delegate to the regular free path.
+  xxfree(ptr);
+}
+
+ALLOC8_EXPORT void xxfree_aligned_sized(void* ptr, size_t, size_t) {
+  xxfree(ptr);
+}
+
 } // extern "C"

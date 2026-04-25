@@ -32,6 +32,8 @@ extern "C" {
   void xxmalloc_unlock();
   void* xxrealloc(void*, size_t);
   void* xxcalloc(size_t, size_t);
+  void  xxfree_sized(void*, size_t);
+  void  xxfree_aligned_sized(void*, size_t, size_t);
 
   // Functions we interpose on (need declarations for MAC_INTERPOSE)
   void  vfree(void*);
@@ -48,6 +50,12 @@ extern "C" {
   void* _ZnamRKSt9nothrow_t(size_t);      // operator new[](size_t, nothrow)
   void  _ZdlPvRKSt9nothrow_t(void*);      // operator delete(void*, nothrow)
   void  _ZdaPvRKSt9nothrow_t(void*);      // operator delete[](void*, nothrow)
+  void  _ZdlPvm(void*, size_t);           // operator delete(void*, size_t)
+  void  _ZdaPvm(void*, size_t);           // operator delete[](void*, size_t)
+
+  // C++14+17 sized+aligned delete (need wrapper functions below)
+  void  _ZdlPvmSt11align_val_t(void*, size_t, size_t);  // operator delete(void*, size_t, align_val_t)
+  void  _ZdaPvmSt11align_val_t(void*, size_t, size_t);  // operator delete[](void*, size_t, align_val_t)
 }
 
 // ─── CORE REPLACEMENT FUNCTIONS ───────────────────────────────────────────────
@@ -313,6 +321,57 @@ void replace_malloc_printf(const char*, ...) {
   // NOP
 }
 
+// ─── C23 SIZED FREE / C++14 SIZED DELETE ─────────────────────────────────────
+//
+// Same foreign-pointer routing as replace_free, but pass the size hint through
+// to xxfree_sized for pointers we own. Allocators that implement free_sized
+// (e.g. DieHard's CombineHeap) get O(1) deallocation; others fall back to
+// xxfree internally.
+
+void replace_free_sized(void* ptr, size_t sz) {
+  if (!ptr) return;
+  ensure_init();
+  if (g_passthrough) { bump(g_count_free_pass); g_sys_free(ptr); return; }
+  if (maybe_owned(ptr)) {
+    bump(g_count_free_user);
+    forget_size(ptr);
+    xxfree_sized(ptr, sz);
+    return;
+  }
+  if (malloc_zone_t* z = libsystem_zone_for(ptr)) {
+    bump(g_count_free_libsys);
+    if (z->free_definite_size) z->free_definite_size(z, ptr, sz);
+    else z->free(z, ptr);
+    return;
+  }
+  bump(g_count_free_dropped);
+}
+
+void replace_free_aligned_sized(void* ptr, size_t alignment, size_t sz) {
+  if (!ptr) return;
+  ensure_init();
+  if (g_passthrough) { bump(g_count_free_pass); g_sys_free(ptr); return; }
+  if (maybe_owned(ptr)) {
+    bump(g_count_free_user);
+    forget_size(ptr);
+    xxfree_aligned_sized(ptr, alignment, sz);
+    return;
+  }
+  if (malloc_zone_t* z = libsystem_zone_for(ptr)) {
+    bump(g_count_free_libsys);
+    if (z->free_definite_size) z->free_definite_size(z, ptr, sz);
+    else z->free(z, ptr);
+    return;
+  }
+  bump(g_count_free_dropped);
+}
+
+// C++14+17 sized+aligned delete replacement (void*, size_t, align_val_t).
+// Note: align_val_t is a scoped enum wrapping size_t, so ABI-compatible.
+void replace_delete_sized_aligned(void* ptr, size_t sz, size_t alignment) {
+  replace_free_aligned_sized(ptr, alignment, sz);
+}
+
 } // extern "C"
 
 // ─── MALLOC ZONE IMPLEMENTATION ───────────────────────────────────────────────
@@ -359,6 +418,17 @@ MAC_INTERPOSE(replace_malloc, _ZnwmRKSt9nothrow_t);
 MAC_INTERPOSE(replace_malloc, _ZnamRKSt9nothrow_t);
 MAC_INTERPOSE(replace_free,   _ZdlPvRKSt9nothrow_t);
 MAC_INTERPOSE(replace_free,   _ZdaPvRKSt9nothrow_t);
+// C++14 sized delete (void*, size_t) and C++17 sized+aligned delete
+// (void*, size_t, align_val_t). All variants go through replace_free_sized /
+// replace_delete_sized_aligned, which do the same foreign-pointer routing as
+// replace_free and pass the size hint through to xxfree_sized for pointers
+// we own. C23 sized free interposers will be added once macOS libc exports
+// the underlying symbols; for now `free_sized()` reaches us via the C++
+// sized-delete operators and via malloc_zone_free_definite_size (mac_zones).
+MAC_INTERPOSE(replace_free_sized, _ZdlPvm);
+MAC_INTERPOSE(replace_free_sized, _ZdaPvm);
+MAC_INTERPOSE(replace_delete_sized_aligned, _ZdlPvmSt11align_val_t);
+MAC_INTERPOSE(replace_delete_sized_aligned, _ZdaPvmSt11align_val_t);
 
 // Zone-API surface: only malloc_zone_from_ptr is interposed, and only as a
 // hook point so we can recover libSystem's original implementation by

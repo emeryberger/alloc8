@@ -12,6 +12,10 @@ GLIBC_2.2.5 {
     posix_memalign;
     aligned_alloc;
 
+    # C23 sized free
+    free_sized;
+    free_aligned_sized;
+
     # Size query
     malloc_usable_size;
 
@@ -56,9 +60,15 @@ GLIBC_2.2.5 {
     _ZdlPvSt11align_val_t;    # operator delete(void*, align_val_t)
     _ZdaPvSt11align_val_t;    # operator delete[](void*, align_val_t)
 
+    # C++14+17 sized + aligned delete
+    _ZdlPvmSt11align_val_t;   # operator delete(void*, size_t, align_val_t)
+    _ZdaPvmSt11align_val_t;   # operator delete[](void*, size_t, align_val_t)
+
     # xxmalloc interface (for debugging/direct calls)
     xxmalloc;
     xxfree;
+    xxfree_sized;
+    xxfree_aligned_sized;
     xxrealloc;
     xxcalloc;
     xxmemalign;

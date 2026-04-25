@@ -7,11 +7,12 @@
 
 include(FetchContent)
 
-# Check for local repos first (with Windows fixes applied)
-set(LOCAL_HEAPLAYERS_DIR "Z:/git/Heap-Layers")
-set(LOCAL_HOARD_DIR "Z:/git/Hoard")
+# Check for local repos first
+set(LOCAL_HEAPLAYERS_DIR "" CACHE PATH "Local Heap-Layers directory (optional)")
+set(LOCAL_HOARD_DIR "" CACHE PATH "Local Hoard directory (optional)")
 
-if(EXISTS "${LOCAL_HEAPLAYERS_DIR}/heaps/utility/uniqueheap.h" AND EXISTS "${LOCAL_HOARD_DIR}/src/include")
+if(LOCAL_HEAPLAYERS_DIR AND EXISTS "${LOCAL_HEAPLAYERS_DIR}/heaps/utility/uniqueheap.h"
+   AND LOCAL_HOARD_DIR AND EXISTS "${LOCAL_HOARD_DIR}/src/include")
   message(STATUS "Using local Heap-Layers from ${LOCAL_HEAPLAYERS_DIR}")
   message(STATUS "Using local Hoard from ${LOCAL_HOARD_DIR}")
   set(heaplayers_SOURCE_DIR "${LOCAL_HEAPLAYERS_DIR}")
