@@ -62,9 +62,36 @@ if(WIN32)
     ${ALLOC8_INTERPOSE_SOURCES}
     ${ALLOC8_COMMON_SOURCES}
   )
-else()
+elseif(APPLE)
+  # paland printf shim (DieFast / DieHarder reference printf_ even when off).
+  FetchContent_Declare(
+    palandprintf
+    GIT_REPOSITORY https://github.com/mpaland/printf.git
+    GIT_TAG        master
+    GIT_SHALLOW    TRUE
+  )
+  FetchContent_MakeAvailable(palandprintf)
+  # macOS uses alloc8's mac_wrapper (see ALLOC8_INTERPOSE_SOURCES). The
+  # header-only gnu_wrapper.h skips foreign-pointer routing and Heap-Layers'
+  # macwrapper.cpp lacks the libobjc/CoreFoundation safety nets — neither
+  # works on modern macOS.
   add_library(diehard_alloc8 SHARED
     diehard_alloc8.cpp
+    ${palandprintf_SOURCE_DIR}/printf.c
+    ${ALLOC8_INTERPOSE_SOURCES}
+    ${ALLOC8_COMMON_SOURCES}
+  )
+else()
+  FetchContent_Declare(
+    palandprintf
+    GIT_REPOSITORY https://github.com/mpaland/printf.git
+    GIT_TAG        master
+    GIT_SHALLOW    TRUE
+  )
+  FetchContent_MakeAvailable(palandprintf)
+  add_library(diehard_alloc8 SHARED
+    diehard_alloc8.cpp
+    ${palandprintf_SOURCE_DIR}/printf.c
   )
 endif()
 
@@ -78,7 +105,7 @@ target_include_directories(diehard_alloc8 PRIVATE
   ${heaplayers_SOURCE_DIR}
   ${heaplayers_SOURCE_DIR}/wrappers
   ${CMAKE_SOURCE_DIR}/include  # alloc8 headers
-  Z:/git/printf  # printf library for DieFast
+  ${palandprintf_SOURCE_DIR}  # printf shim header (printf.h with printf_ symbol)
 )
 
 target_compile_definitions(diehard_alloc8 PRIVATE
@@ -132,6 +159,11 @@ endif()
 if(WIN32)
   target_link_libraries(diehard_alloc8 PRIVATE
     alloc8::interpose
+  )
+elseif(APPLE)
+  target_link_libraries(diehard_alloc8 PRIVATE
+    alloc8::interpose
+    pthread
   )
 else()
   target_link_libraries(diehard_alloc8 PRIVATE

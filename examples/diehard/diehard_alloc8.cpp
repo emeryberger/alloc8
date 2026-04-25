@@ -187,7 +187,10 @@ void* xxcalloc(size_t count, size_t sz) {
 #if defined(__linux__)
 #include <alloc8/gnu_wrapper.h>
 #elif defined(__APPLE__)
-#include "macwrapper.cpp"
+// macOS uses alloc8's mac_wrapper.cpp linked via CMake (see ALLOC8_INTERPOSE_SOURCES).
+// The xxmalloc/xxfree/xxmalloc_usable_size functions defined above are called
+// by alloc8's replace_* shims, which add foreign-pointer routing and
+// allocation-ownership tracking required by modern macOS libobjc/CoreFoundation.
 #elif defined(_WIN32)
 // Windows uses alloc8's win_wrapper_detours.cpp linked via CMake
 // The xxmalloc functions above are called by the detoured malloc functions

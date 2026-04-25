@@ -323,6 +323,150 @@ DYLD_INSERT_LIBRARIES=./examples/hoard/libhoard_alloc8.dylib ./my_program
 - Uses `__DATA,__interpose` Mach-O section
 - Full `malloc_zone_t` implementation
 - Fork safety via `_malloc_fork_*` interposition
+- Foreign-pointer routing — see [macOS Compatibility (Firefox / GUI apps)](#macos-compatibility-firefox--gui-apps).
+
+## macOS Compatibility (Firefox / GUI apps)
+
+Modern macOS GUI applications (Firefox, Chromium, anything that links libobjc /
+CoreFoundation / libxpc / libsandbox) hit two failure modes when an allocator
+is injected via `DYLD_INSERT_LIBRARIES`:
+
+1. **`malloc_size`-based pointer validation.** libobjc's class-realization
+   path runs `ASSERT(malloc_size(cls) >= sizeof(objc_class))` for every class
+   it touches and aborts with `realized class … has corrupt data pointer:
+   malloc_size(…) = 0` on the first hit if the answer is wrong. CoreFoundation
+   and libxpc do similar pointer probes through `malloc_zone_from_ptr` and
+   `zone->size`. A user allocator that returns 0 (DieHard) or dereferences
+   garbage (Hoard) on a foreign pointer crashes the process there.
+2. **Child-process sandbox compilation.** Firefox spawns helpers
+   (`plugin-container`, `Nightly GPU Helper`) which compile sandbox profiles
+   via libsandbox's TinyScheme parser during very-early dyld init. If our
+   interposers are present at that moment, the parser's free path picks up
+   the wrong zone and aborts with
+   `BUG IN CLIENT OF LIBMALLOC: POINTER BEING FREED WAS NOT ALLOCATED`.
+
+### What alloc8 does on macOS
+
+- **Foreign-pointer routing.** Every `replace_*` entry point checks an
+  ownership table before touching the user allocator. If the pointer was
+  issued by us, we forward to `xxmalloc_usable_size`/`xxfree`/etc; otherwise
+  we route to the libSystem zone that owns it (resolved via the captured
+  original `malloc_zone_from_ptr` — see below). Pointers in no zone we
+  recognize (dyld shared cache, third-party mmaps) are dropped silently
+  rather than handed to libSystem free, which would abort.
+- **Sharded ownership/size table.** A 256-shard × 16,384-bucket × 64-probe
+  open-addressed hash table records every pointer the user allocator returns
+  and its requested size. Inserts and lookups are lock-free CAS on a single
+  shard; sharding by the high bits of the splitmix hash keeps cache-line
+  contention low across many threads. Lazily mmap'd, ~64 MB virtual /
+  ~physical-pages-touched.
+- **Original-libSystem function recovery.** `dlsym(…, "malloc_zone_from_ptr")`
+  returns our wrapper after dyld processes our `__interpose` section; we
+  recover the real libSystem pointer by walking our own `__DATA_CONST,__interpose`
+  section (also `__AUTH_CONST` on arm64e, `__DATA` on older toolchains)
+  and reading the unmodified `original` field.
+- **Minimal zone-API surface.** Only `malloc_zone_from_ptr` is interposed at
+  the zone API level, and that interposer is a transparent passthrough to
+  the captured libSystem implementation. We deliberately do **not** interpose
+  `malloc_default_zone`, `malloc_create_zone`, `malloc_get_all_zones`,
+  `malloc_zone_register`, or any of the per-zone alloc/free entry points;
+  doing so corrupts libsandbox's zone bookkeeping in child processes.
+- **`DYLD_INSERT_LIBRARIES` strip-for-children.** A constructor strips
+  `DYLD_INSERT_LIBRARIES` from the parent's environment, so spawned helpers
+  run with libSystem only. The parent process remains fully instrumented.
+  Override with `ALLOC8_NO_STRIP=1` if you want injection in children too;
+  alloc8 will then auto-detect known Firefox child-process names
+  (`plugin-container`, `Nightly GPU Helper`, `Nightly Media Plugin Helper`,
+  `Nightly Security Module Helper`) and run them in passthrough mode (every
+  `replace_*` calls libSystem directly, leaving the user allocator out of
+  the child).
+
+### Verified
+
+Tested against a self-built Firefox 152.0a1 (macOS 26.4 / arm64) loading
+real pages over HTTPS via marionette. Hoard and the simple_heap example
+allocator both run as the parent's allocator with pages rendering
+correctly; DieHard hits an unrelated pre-existing bug in its own
+`HL::STLAllocator<…, LargeHeap<MmapWrapper>::SourceHeap>` rehash path
+during Swift autorelease cleanup that is not related to alloc8.
+
+## Stats Gathering (macOS)
+
+alloc8 can count its own work and dump a histogram of requested sizes,
+useful for confirming "is my custom allocator actually getting hit?"
+without attaching a debugger.
+
+Set `ALLOC8_STATS=1` and the dylib will dump a stats block to stderr every
+200,000 user-allocator `malloc` calls. Output includes:
+
+- per-call counts split into `user` (routed to your allocator) and
+  `passthrough` (routed to libSystem, in child processes when
+  `ALLOC8_NO_STRIP=1`)
+- `free → libSystem` and `free dropped (foreign)` — pointers that arrived
+  at our `free` interposer but came from outside our allocator
+- a histogram of requested sizes (power-of-2 buckets, 1 byte through
+  multi-GB) so you can see the allocation distribution
+
+### Example
+
+```bash
+ALLOC8_STATS=1 \
+  DYLD_INSERT_LIBRARIES=build/examples/hoard/libhoard_alloc8.dylib \
+  /path/to/firefox --no-remote --profile /tmp/p https://example.com/
+```
+
+Sample output after browsing a few real pages:
+
+```
+=== alloc8 stats (proc=firefox, passthrough=0) ===
+  malloc:           1,600,000 user             0 passthrough
+  calloc:             400,331 user             0 passthrough
+  realloc:            132,577 user             0 passthrough
+  posix_memalign:         963 user             0 passthrough
+  free:             1,609,797 user             0 passthrough
+  free → libSystem:     6,577  free dropped (foreign): 452
+  malloc_size:         89,972 user           103 libSystem    0 passthrough
+  --------------------------------------------------
+  total user-allocator calls:     3,833,640
+  total passthrough calls:        0
+  --------------------------------------------------
+  alloc-size histogram (request size at malloc/calloc/realloc/memalign):
+            ≤ 1 B          2,824    0.1%
+       2 B –    3 B         6,406    0.3%
+       4 B –    7 B        18,315    0.9%
+       8 B –   15 B       103,579    4.9%  #
+      16 B –   31 B       434,713   20.4%  ########
+      32 B –   63 B       571,181   26.8%  ##########
+      64 B –  127 B       451,012   21.1%  ########
+     128 B –  255 B       278,235   13.0%  #####
+     256 B –  511 B       135,526    6.4%  ##
+     512 B – 1023 B        52,364    2.5%
+       1 KB –    1 KB        30,781    1.4%
+       2 KB –    3 KB        15,083    0.7%
+       4 KB –    7 KB        18,623    0.9%
+       8 KB –   15 KB        10,421    0.5%
+      16 KB –   31 KB         2,358    0.1%
+      …
+  total sized requests: 2,133,870
+===================================================
+```
+
+`passthrough=0` plus `total passthrough calls: 0` confirms every allocation
+went to your user allocator (Hoard, here). Anything non-zero in the
+passthrough columns means alloc8 routed that call to libSystem instead.
+
+When `ALLOC8_STATS` is unset, the counters are gated by a single relaxed
+atomic load per call and never written, so leaving the support compiled in
+is free.
+
+## Environment variables (macOS)
+
+| Variable                   | Effect                                                                                                                          |
+|----------------------------|----------------------------------------------------------------------------------------------------------------------------------|
+| `ALLOC8_STATS=1`           | Enable per-call counters and the size histogram. Dumps to stderr every 200,000 user-allocator `malloc` calls.                  |
+| `ALLOC8_DEBUG=1`           | One-line diagnostic at init: which proc, whether passthrough is on, libSystem `malloc_zone_from_ptr` resolution result.        |
+| `ALLOC8_PASSTHROUGH=1`     | Force passthrough mode in this process — every `replace_*` calls libSystem instead of the user allocator. `=0` forces it off. |
+| `ALLOC8_NO_STRIP=1`        | Don't strip `DYLD_INSERT_LIBRARIES` from the parent's environment. Children will then load alloc8 (and may hit sandbox aborts; alloc8 falls back to passthrough mode for known Firefox child names but other apps may still need work). |
 
 ### Windows
 - Uses [Microsoft Detours](https://github.com/microsoft/Detours) (auto-fetched via CMake)
