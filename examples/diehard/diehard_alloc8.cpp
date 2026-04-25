@@ -10,10 +10,9 @@
 #include <cassert>
 #include <cstring>
 
-// Workaround for DieHard upstream bug: printf_ is used but never defined
-#define printf_ printf
-// Required by printf.h/printf.cpp
-extern "C" void _putchar(char c) {
+// Backend hook required by the eyalroz/printf shim that DieHard's DieFast /
+// DieHarder paths call into via printf_("...").
+extern "C" void putchar_(char c) {
   fputc(c, stderr);
 }
 
