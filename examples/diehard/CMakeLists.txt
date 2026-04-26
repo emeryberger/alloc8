@@ -62,26 +62,6 @@ else()
   endif()
 endif()
 
-# Patch DieHard's LargeHeap to not auto-insert in get() — it uses
-# `_objectSize[ptr]` which silently inserts a phantom (key, 0) entry on
-# every miss, and over time the rehash mmaps a fresh bucket array and
-# bzero's it; that bzero races with pthread TSD cleanup during macOS
-# autoreleasepool teardown and crashes the parent process. Upstream PR:
-# https://github.com/emeryberger/DieHard/pull/24
-# This block is a no-op once the PR is merged and the FetchContent tag
-# moves forward.
-if(EXISTS "${diehard_SOURCE_DIR}/src/include/largeheap.h")
-  file(READ "${diehard_SOURCE_DIR}/src/include/largeheap.h" LARGEHEAP_CONTENT)
-  string(REPLACE
-    "  inline size_t get (void * ptr) {\n    size_t sz = _objectSize[ptr];\n    return sz;\n  }"
-    "  inline size_t get (void * ptr) {\n    auto it = _objectSize.find(ptr);\n    return it == _objectSize.end() ? 0 : it->second;\n  }"
-    LARGEHEAP_PATCHED "${LARGEHEAP_CONTENT}")
-  if(NOT "${LARGEHEAP_CONTENT}" STREQUAL "${LARGEHEAP_PATCHED}")
-    file(WRITE "${diehard_SOURCE_DIR}/src/include/largeheap.h" "${LARGEHEAP_PATCHED}")
-    message(STATUS "Patched DieHard largeheap.h: get() uses find() (PR #24)")
-  endif()
-endif()
-
 # Fetch printf library (needed by DieHard's DieFast feature). Use the
 # actively-maintained eyalroz/printf fork — mpaland's original is no longer
 # maintained, and emeryberger/printf was a snapshot of that. eyalroz keeps
