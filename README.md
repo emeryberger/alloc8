@@ -22,7 +22,7 @@ Factored from proven patterns in [Hoard](https://github.com/emeryberger/Hoard), 
 include(FetchContent)
 FetchContent_Declare(
   alloc8
-  GIT_REPOSITORY https://github.com/yourusername/alloc8.git
+  GIT_REPOSITORY https://github.com/emeryberger/alloc8.git
   GIT_TAG        v1.0.0
 )
 FetchContent_MakeAvailable(alloc8)
