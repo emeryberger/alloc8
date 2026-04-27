@@ -15,6 +15,7 @@
 #include <signal.h>
 #include <stdint.h>
 #include <sys/mman.h>
+#include <unistd.h>
 
 // ─── ALLOCATION OWNERSHIP TABLE ───────────────────────────────────────────────
 //
@@ -477,7 +478,7 @@ extern "C" void alloc8_dump_stats(int /*sig*/) {
   uint64_t total_user = mu + cu + ru + au + fu + su;
   uint64_t total_pass = mp + cp + rp + ap + fp + sp;
   fprintf(stderr,
-    "\n=== alloc8 stats (proc=%s, passthrough=%d) ===\n"
+    "\n=== alloc8 stats (proc=%s, pid=%d, passthrough=%d) ===\n"
     "  malloc:           %12llu user  %12llu passthrough\n"
     "  calloc:           %12llu user  %12llu passthrough\n"
     "  realloc:          %12llu user  %12llu passthrough\n"
@@ -488,7 +489,7 @@ extern "C" void alloc8_dump_stats(int /*sig*/) {
     "  --------------------------------------------------\n"
     "  total user-allocator calls:     %llu\n"
     "  total passthrough calls:        %llu\n",
-    getprogname() ? getprogname() : "?", (int)g_passthrough,
+    getprogname() ? getprogname() : "?", (int)getpid(), (int)g_passthrough,
     (unsigned long long)mu, (unsigned long long)mp,
     (unsigned long long)cu, (unsigned long long)cp,
     (unsigned long long)ru, (unsigned long long)rp,
