@@ -1,7 +1,10 @@
 # alloc8 version script for Linux
-# Controls symbol visibility and GLIBC versioning
+# Controls symbol visibility and GLIBC versioning. The GLIBC base version is
+# substituted by CMake (configure_file with @ONLY) — see CMakeLists.txt for the
+# per-arch logic. Exporting below the minimum version a binary requests causes
+# ld.so to silently bypass LD_PRELOAD.
 
-GLIBC_2.2.5 {
+@ALLOC8_GLIBC_BASE_VERSION@ {
   global:
     # Core allocation functions
     malloc;

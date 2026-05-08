@@ -85,6 +85,21 @@ set_target_properties(alloc8_common PROPERTIES
 
 # ─── PLATFORM-SPECIFIC INTERPOSITION ───────────────────────────────────────────
 if(ALLOC8_PLATFORM_LINUX)
+  # Pick the GLIBC base version for the version script. The exported malloc
+  # symbol must satisfy what application binaries request: on aarch64 the
+  # earliest malloc version is GLIBC_2.17 (aarch64 ABI was added in 2.17), so
+  # exporting at 2.2.5 leaves binaries' `malloc@GLIBC_2.17` requests unsatisfied
+  # and ld.so silently binds them to libc — LD_PRELOAD never intercepts.
+  if(NOT ALLOC8_GLIBC_BASE_VERSION)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+      set(ALLOC8_GLIBC_BASE_VERSION "GLIBC_2.17")
+    else()
+      set(ALLOC8_GLIBC_BASE_VERSION "GLIBC_2.2.5")
+    endif()
+  endif()
+  set(ALLOC8_GLIBC_BASE_VERSION "${ALLOC8_GLIBC_BASE_VERSION}"
+      CACHE INTERNAL "GLIBC base version for exported malloc/etc.")
+
   # Generate version script from template
   configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/linux/version_script.map.in
