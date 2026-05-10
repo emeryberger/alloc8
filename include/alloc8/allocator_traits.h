@@ -2,6 +2,7 @@
 #pragma once
 
 #include "platform.h"
+#include <atomic>
 #include <cstddef>
 #include <cstring>
 #include <new>
@@ -83,13 +84,45 @@ public:
 
   /**
    * Get singleton heap instance.
-   * Uses placement new into static buffer to ensure it survives past atexit.
+   *
+   * Uses a hand-rolled init pattern instead of the natural
+   *   `static AllocatorType* heap = new (buffer) AllocatorType;`
+   * because that triggers the C++ thread-safe-static-init machinery: every
+   * call performs an acquire-load on a guard variable AND a dependent load
+   * of the cached heap pointer.  perf-record on a smash-LD_PRELOADed
+   * malloc/free microbench showed the guard's `tbz w1, #0` at 33 % of
+   * xxfree's CPU samples.
+   *
+   * The replacement state machine uses an `std::atomic<int>`:
+   *   0 = uninitialised, 1 = initialising, 2 = ready.
+   * The post-init fast path is acquire-load state + cmp + return
+   * `reinterpret_cast<AllocatorType*>(buffer)` — the buffer's address is
+   * a link-time constant, no dependent pointer load.  We still need the
+   * acquire-load because clients of the returned pointer must see the
+   * placement-new'd object's memory effects; without it the freshly
+   * initialised members could appear zero.
    */
   ALLOC8_ALWAYS_INLINE
   static AllocatorType* getHeap() {
     alignas(AllocatorType) static char buffer[sizeof(AllocatorType)];
-    static AllocatorType* heap = new (buffer) AllocatorType;
-    return heap;
+    static std::atomic<int> state{0};  // 0=uninit, 1=initialising, 2=ready
+    int s = state.load(std::memory_order_acquire);
+    if (s == 2) [[likely]]
+      return reinterpret_cast<AllocatorType*>(buffer);
+    // Slow path: first thread to flip 0→1 constructs; others spin until 2.
+    if (s == 0 && state.compare_exchange_strong(s, 1, std::memory_order_acq_rel)) {
+      new (buffer) AllocatorType;
+      state.store(2, std::memory_order_release);
+      return reinterpret_cast<AllocatorType*>(buffer);
+    }
+    while (state.load(std::memory_order_acquire) != 2) {
+#if defined(__x86_64__)
+      __builtin_ia32_pause();
+#elif defined(__aarch64__)
+      asm volatile("yield");
+#endif
+    }
+    return reinterpret_cast<AllocatorType*>(buffer);
   }
 
   ALLOC8_ALWAYS_INLINE ALLOC8_MALLOC_ATTR ALLOC8_ALLOC_SIZE(1)
