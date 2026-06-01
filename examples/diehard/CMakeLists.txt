@@ -62,14 +62,19 @@ else()
   endif()
 endif()
 
-# Fetch printf library (needed by DieHard's DieFast feature)
-if(LOCAL_PRINTF_DIR AND EXISTS "${LOCAL_PRINTF_DIR}/printf.cpp")
+# Fetch printf library (needed by DieHard's DieFast feature). Use the
+# actively-maintained eyalroz/printf fork — mpaland's original is no longer
+# maintained, and emeryberger/printf was a snapshot of that. eyalroz keeps
+# the same `printf_` API but ships sources at src/printf/printf.{c,h} and
+# uses the standardized putchar_(char) backend symbol (not the older
+# _putchar).
+if(LOCAL_PRINTF_DIR AND EXISTS "${LOCAL_PRINTF_DIR}/src/printf/printf.c")
   message(STATUS "Using local printf from ${LOCAL_PRINTF_DIR}")
   set(printf_SOURCE_DIR "${LOCAL_PRINTF_DIR}")
 else()
   FetchContent_Declare(
     printf
-    GIT_REPOSITORY https://github.com/emeryberger/printf.git
+    GIT_REPOSITORY https://github.com/eyalroz/printf.git
     GIT_TAG        master
     GIT_SHALLOW    TRUE
   )
@@ -78,19 +83,38 @@ else()
     FetchContent_Populate(printf)
   endif()
 endif()
+set(PRINTF_SOURCE "${printf_SOURCE_DIR}/src/printf/printf.c")
+# Two include dirs: src/ for printf.c's `#include <printf/printf.h>`, and
+# src/printf/ for DieHard's randomminiheap-core.h's `#include "printf.h"`.
+set(PRINTF_INCLUDE_DIRS
+  "${printf_SOURCE_DIR}/src"
+  "${printf_SOURCE_DIR}/src/printf"
+)
 
 # Build DieHard with alloc8
 # On Windows, use alloc8 interpose sources; on Unix, use header-only wrapper
 if(WIN32)
   add_library(diehard_alloc8 SHARED
     diehard_alloc8.cpp
-    ${printf_SOURCE_DIR}/printf.cpp
+    ${PRINTF_SOURCE}
+    ${ALLOC8_INTERPOSE_SOURCES}
+    ${ALLOC8_COMMON_SOURCES}
+  )
+elseif(APPLE)
+  # macOS uses alloc8's mac_wrapper (see ALLOC8_INTERPOSE_SOURCES). The
+  # header-only gnu_wrapper.h skips foreign-pointer routing and Heap-Layers'
+  # macwrapper.cpp lacks the libobjc/CoreFoundation safety nets — neither
+  # works on modern macOS.
+  add_library(diehard_alloc8 SHARED
+    diehard_alloc8.cpp
+    ${PRINTF_SOURCE}
     ${ALLOC8_INTERPOSE_SOURCES}
     ${ALLOC8_COMMON_SOURCES}
   )
 else()
   add_library(diehard_alloc8 SHARED
     diehard_alloc8.cpp
+    ${PRINTF_SOURCE}
   )
 endif()
 
@@ -104,7 +128,7 @@ target_include_directories(diehard_alloc8 PRIVATE
   ${heaplayers_SOURCE_DIR}
   ${heaplayers_SOURCE_DIR}/wrappers
   ${CMAKE_SOURCE_DIR}/include  # alloc8 headers
-  ${printf_SOURCE_DIR}  # printf library for DieFast
+  ${PRINTF_INCLUDE_DIRS}  # printf library for DieFast (eyalroz/printf)
 )
 
 target_compile_definitions(diehard_alloc8 PRIVATE
@@ -158,6 +182,11 @@ endif()
 if(WIN32)
   target_link_libraries(diehard_alloc8 PRIVATE
     alloc8::interpose
+  )
+elseif(APPLE)
+  target_link_libraries(diehard_alloc8 PRIVATE
+    alloc8::interpose
+    pthread
   )
 else()
   target_link_libraries(diehard_alloc8 PRIVATE
