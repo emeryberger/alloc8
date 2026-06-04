@@ -559,6 +559,414 @@ static void test_large_alloc(void) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ * LEAK DETECTION TESTS
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+#ifdef _WIN32
+#include <psapi.h>
+static size_t get_rss_bytes(void) {
+    PROCESS_MEMORY_COUNTERS pmc;
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+        return pmc.WorkingSetSize;
+    }
+    return 0;
+}
+#elif defined(__APPLE__)
+#include <mach/mach.h>
+static size_t get_rss_bytes(void) {
+    struct task_basic_info info;
+    mach_msg_type_number_t count = TASK_BASIC_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_BASIC_INFO, (task_info_t)&info, &count) == KERN_SUCCESS) {
+        return info.resident_size;
+    }
+    return 0;
+}
+#else
+static size_t get_rss_bytes(void) {
+    FILE *f = fopen("/proc/self/statm", "r");
+    if (f == NULL) return 0;
+
+    unsigned long size, resident;
+    if (fscanf(f, "%lu %lu", &size, &resident) != 2) {
+        fclose(f);
+        return 0;
+    }
+    fclose(f);
+
+    long page_size = sysconf(_SC_PAGESIZE);
+    return resident * page_size;
+}
+#endif
+
+/* Helper to stabilize memory before measurement */
+static void stabilize_memory(void) {
+    /* Do some allocations and frees to warm up the allocator */
+    for (int i = 0; i < 100; i++) {
+        void *p = malloc(4096);
+        if (p) { memset(p, 0, 4096); free(p); }
+    }
+#ifdef __APPLE__
+    /* macOS may need a brief pause for memory to settle */
+    usleep(10000);  /* 10ms */
+#endif
+}
+
+/*
+ * Leak detection note:
+ * We use RSS (Resident Set Size) to detect leaks, but this has limitations:
+ * - Allocators often retain freed memory for performance (memory pooling)
+ * - OS may not immediately reclaim memory
+ * - RSS can grow due to memory fragmentation
+ *
+ * Our approach: Run allocation/free cycles and check that RSS doesn't grow
+ * unboundedly. A small amount of retained memory is acceptable, but if we're
+ * leaking, RSS will grow significantly beyond what was allocated.
+ *
+ * We set generous thresholds to avoid false positives from allocator pooling,
+ * but still catch genuine leaks (where free() doesn't actually free).
+ */
+
+/*
+ * Multi-cycle leak detection: Run the same alloc/free pattern multiple times.
+ * If there's a real leak, memory will grow with each cycle.
+ * If allocator just retains memory (normal), it will plateau after the first cycle.
+ */
+
+static void test_leak_small_allocs(void) {
+    TEST("leak check: small allocations (3 cycles)");
+
+    stabilize_memory();
+    if (get_rss_bytes() == 0) {
+        printf("[SKIP] cannot read RSS\n");
+        tests_run--;
+        return;
+    }
+
+    const int N = 20000;
+    const size_t alloc_size = 64;
+    size_t rss_after[3];
+
+    for (int cycle = 0; cycle < 3; cycle++) {
+        void **ptrs = (void **)malloc(N * sizeof(void*));
+        if (ptrs == NULL) { FAIL("could not allocate pointer array"); return; }
+
+        for (int i = 0; i < N; i++) {
+            ptrs[i] = malloc(alloc_size);
+            if (ptrs[i] == NULL) {
+                FAIL("malloc failed");
+                for (int j = 0; j < i; j++) free(ptrs[j]);
+                free(ptrs);
+                return;
+            }
+            memset(ptrs[i], 0xAB, alloc_size);
+        }
+
+        for (int i = 0; i < N; i++) {
+            free(ptrs[i]);
+        }
+        free(ptrs);
+
+        stabilize_memory();
+        rss_after[cycle] = get_rss_bytes();
+    }
+
+    /* Check: memory should stabilize, not keep growing unboundedly.
+     * Allow the first cycle to grow (allocator warming up).
+     * Cycles 2->3 may still grow slightly due to fragmentation.
+     * Flag only if growth exceeds the amount allocated per cycle. */
+    size_t growth = (rss_after[2] > rss_after[1]) ? (rss_after[2] - rss_after[1]) : 0;
+    size_t per_cycle_alloc = N * alloc_size;
+
+    if (growth > per_cycle_alloc) {
+        char msg[128];
+        snprintf(msg, sizeof(msg),
+                 "memory growing: c1=%zuKB, c2=%zuKB, c3=%zuKB",
+                 rss_after[0]/1024, rss_after[1]/1024, rss_after[2]/1024);
+        FAIL(msg);
+        return;
+    }
+    PASS();
+}
+
+static void test_leak_large_allocs(void) {
+    TEST("leak check: large allocations (3 cycles)");
+
+    stabilize_memory();
+    if (get_rss_bytes() == 0) {
+        printf("[SKIP] cannot read RSS\n");
+        tests_run--;
+        return;
+    }
+
+    const int N = 5;
+    const size_t alloc_size = 4 * 1024 * 1024;
+    size_t rss_after[3];
+
+    for (int cycle = 0; cycle < 3; cycle++) {
+        void *ptrs[5];
+
+        for (int i = 0; i < N; i++) {
+            ptrs[i] = malloc(alloc_size);
+            if (ptrs[i] == NULL) {
+                FAIL("malloc failed");
+                for (int j = 0; j < i; j++) free(ptrs[j]);
+                return;
+            }
+            memset(ptrs[i], 0xCD, alloc_size);
+        }
+
+        for (int i = 0; i < N; i++) {
+            free(ptrs[i]);
+        }
+
+        stabilize_memory();
+        rss_after[cycle] = get_rss_bytes();
+    }
+
+    size_t growth = (rss_after[2] > rss_after[1]) ? (rss_after[2] - rss_after[1]) : 0;
+    size_t per_cycle_alloc = N * alloc_size;
+
+    if (growth > per_cycle_alloc) {
+        char msg[128];
+        snprintf(msg, sizeof(msg),
+                 "memory growing: c1=%zuMB, c2=%zuMB, c3=%zuMB",
+                 rss_after[0]/(1024*1024), rss_after[1]/(1024*1024), rss_after[2]/(1024*1024));
+        FAIL(msg);
+        return;
+    }
+    PASS();
+}
+
+static void test_leak_aligned_allocs(void) {
+    TEST("leak check: aligned allocations (3 cycles)");
+
+    stabilize_memory();
+    if (get_rss_bytes() == 0) {
+        printf("[SKIP] cannot read RSS\n");
+        tests_run--;
+        return;
+    }
+
+    const int N = 500;
+    const size_t alloc_size = 4096;
+    const size_t alignment = 4096;
+    size_t rss_after[3];
+
+    for (int cycle = 0; cycle < 3; cycle++) {
+        void **ptrs = (void **)malloc(N * sizeof(void*));
+        if (ptrs == NULL) { FAIL("could not allocate pointer array"); return; }
+
+        for (int i = 0; i < N; i++) {
+            ptrs[i] = aligned_alloc_impl(alignment, alloc_size);
+            if (ptrs[i] == NULL) {
+                FAIL("aligned_alloc failed");
+                for (int j = 0; j < i; j++) aligned_free_impl(ptrs[j]);
+                free(ptrs);
+                return;
+            }
+            memset(ptrs[i], 0xEF, alloc_size);
+        }
+
+        for (int i = 0; i < N; i++) {
+            aligned_free_impl(ptrs[i]);
+        }
+        free(ptrs);
+
+        stabilize_memory();
+        rss_after[cycle] = get_rss_bytes();
+    }
+
+    size_t growth = (rss_after[2] > rss_after[1]) ? (rss_after[2] - rss_after[1]) : 0;
+    size_t per_cycle_alloc = N * alloc_size;
+
+    /* Flag if growth exceeds the per-cycle allocation - indicates real leak */
+    if (growth > per_cycle_alloc) {
+        char msg[128];
+        snprintf(msg, sizeof(msg),
+                 "memory growing: c1=%zuKB, c2=%zuKB, c3=%zuKB",
+                 rss_after[0]/1024, rss_after[1]/1024, rss_after[2]/1024);
+        FAIL(msg);
+        return;
+    }
+    PASS();
+}
+
+static void test_leak_realloc_pattern(void) {
+    TEST("leak check: realloc pattern (3 cycles)");
+
+    stabilize_memory();
+    if (get_rss_bytes() == 0) {
+        printf("[SKIP] cannot read RSS\n");
+        tests_run--;
+        return;
+    }
+
+    const int ITERATIONS = 500;
+    size_t rss_after[3];
+
+    for (int cycle = 0; cycle < 3; cycle++) {
+        for (int i = 0; i < ITERATIONS; i++) {
+            char *p = (char *)malloc(64);
+            if (p == NULL) { FAIL("malloc failed"); return; }
+            memset(p, 'A', 64);
+
+            p = (char *)realloc(p, 4096);
+            if (p == NULL) { FAIL("realloc failed"); return; }
+            memset(p, 'B', 4096);
+
+            p = (char *)realloc(p, 65536);
+            if (p == NULL) { FAIL("realloc failed"); return; }
+            memset(p, 'C', 65536);
+
+            p = (char *)realloc(p, 1024);
+            if (p == NULL) { FAIL("realloc failed"); return; }
+
+            free(p);
+        }
+
+        stabilize_memory();
+        rss_after[cycle] = get_rss_bytes();
+    }
+
+    size_t growth = (rss_after[2] > rss_after[1]) ? (rss_after[2] - rss_after[1]) : 0;
+
+    /* Allow 4MB growth tolerance */
+    if (growth > 4 * 1024 * 1024) {
+        char msg[128];
+        snprintf(msg, sizeof(msg),
+                 "memory growing: c1=%zuMB, c2=%zuMB, c3=%zuMB",
+                 rss_after[0]/(1024*1024), rss_after[1]/(1024*1024), rss_after[2]/(1024*1024));
+        FAIL(msg);
+        return;
+    }
+    PASS();
+}
+
+static void test_leak_calloc(void) {
+    TEST("leak check: calloc allocations (3 cycles)");
+
+    stabilize_memory();
+    if (get_rss_bytes() == 0) {
+        printf("[SKIP] cannot read RSS\n");
+        tests_run--;
+        return;
+    }
+
+    const int N = 500;
+    const size_t elem_size = 4096;
+    size_t rss_after[3];
+
+    for (int cycle = 0; cycle < 3; cycle++) {
+        void **ptrs = (void **)malloc(N * sizeof(void*));
+        if (ptrs == NULL) { FAIL("could not allocate pointer array"); return; }
+
+        for (int i = 0; i < N; i++) {
+            ptrs[i] = calloc(1, elem_size);
+            if (ptrs[i] == NULL) {
+                FAIL("calloc failed");
+                for (int j = 0; j < i; j++) free(ptrs[j]);
+                free(ptrs);
+                return;
+            }
+            /* Verify zeroed on first cycle */
+            if (cycle == 0) {
+                unsigned char *bytes = (unsigned char *)ptrs[i];
+                for (size_t j = 0; j < 16; j++) {
+                    if (bytes[j] != 0) {
+                        FAIL("calloc memory not zeroed");
+                        for (int k = 0; k <= i; k++) free(ptrs[k]);
+                        free(ptrs);
+                        return;
+                    }
+                }
+            }
+            memset(ptrs[i], 0xDD, elem_size);
+        }
+
+        for (int i = 0; i < N; i++) {
+            free(ptrs[i]);
+        }
+        free(ptrs);
+
+        stabilize_memory();
+        rss_after[cycle] = get_rss_bytes();
+    }
+
+    size_t growth = (rss_after[2] > rss_after[1]) ? (rss_after[2] - rss_after[1]) : 0;
+    size_t per_cycle_alloc = N * elem_size;
+
+    if (growth > per_cycle_alloc) {
+        char msg[128];
+        snprintf(msg, sizeof(msg),
+                 "memory growing: c1=%zuKB, c2=%zuKB, c3=%zuKB",
+                 rss_after[0]/1024, rss_after[1]/1024, rss_after[2]/1024);
+        FAIL(msg);
+        return;
+    }
+    PASS();
+}
+
+static void test_leak_strdup(void) {
+    TEST("leak check: strdup allocations (3 cycles)");
+
+    stabilize_memory();
+    if (get_rss_bytes() == 0) {
+        printf("[SKIP] cannot read RSS\n");
+        tests_run--;
+        return;
+    }
+
+    const size_t str_len = 5000;
+    const int N = 500;
+    size_t rss_after[3];
+
+    /* Create a string to duplicate */
+    char *original = (char *)malloc(str_len + 1);
+    if (original == NULL) { FAIL("malloc failed"); return; }
+    memset(original, 'X', str_len);
+    original[str_len] = '\0';
+
+    for (int cycle = 0; cycle < 3; cycle++) {
+        char **copies = (char **)malloc(N * sizeof(char*));
+        if (copies == NULL) { FAIL("malloc failed"); free(original); return; }
+
+        for (int i = 0; i < N; i++) {
+            copies[i] = strdup(original);
+            if (copies[i] == NULL) {
+                FAIL("strdup failed");
+                for (int j = 0; j < i; j++) free(copies[j]);
+                free(copies);
+                free(original);
+                return;
+            }
+        }
+
+        for (int i = 0; i < N; i++) {
+            free(copies[i]);
+        }
+        free(copies);
+
+        stabilize_memory();
+        rss_after[cycle] = get_rss_bytes();
+    }
+
+    free(original);
+
+    size_t growth = (rss_after[2] > rss_after[1]) ? (rss_after[2] - rss_after[1]) : 0;
+    size_t per_cycle_alloc = N * (str_len + 1);
+
+    if (growth > per_cycle_alloc) {
+        char msg[128];
+        snprintf(msg, sizeof(msg),
+                 "memory growing: c1=%zuKB, c2=%zuKB, c3=%zuKB",
+                 rss_after[0]/1024, rss_after[1]/1024, rss_after[2]/1024);
+        FAIL(msg);
+        return;
+    }
+    PASS();
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
  * MAIN
  * ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -608,6 +1016,14 @@ int main(void) {
     test_random_sizes();
     test_alignment_default();
     test_large_alloc();
+
+    printf("\nLeak detection tests:\n");
+    test_leak_small_allocs();
+    test_leak_large_allocs();
+    test_leak_aligned_allocs();
+    test_leak_realloc_pattern();
+    test_leak_calloc();
+    test_leak_strdup();
 
     printf("\n╔══════════════════════════════════════════════════════════════════╗\n");
     if (tests_failed == 0) {
