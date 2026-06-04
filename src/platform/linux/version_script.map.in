@@ -3,6 +3,11 @@
 # substituted by CMake (configure_file with @ONLY) — see CMakeLists.txt for the
 # per-arch logic. Exporting below the minimum version a binary requests causes
 # ld.so to silently bypass LD_PRELOAD.
+#
+# NOTE: aligned_alloc is exported separately under GLIBC_2.16 (when it was
+# introduced) to ensure LD_PRELOAD interposition works correctly. Without this,
+# programs compiled against glibc 2.16+ would bind to libc's aligned_alloc
+# instead of the custom allocator's version.
 
 @ALLOC8_GLIBC_BASE_VERSION@ {
   global:
@@ -13,7 +18,7 @@
     realloc;
     memalign;
     posix_memalign;
-    aligned_alloc;
+    # aligned_alloc is in GLIBC_2.16 section below
 
     # C23 sized free
     free_sized;
@@ -89,3 +94,11 @@
   local:
     *;
 };
+
+# aligned_alloc was introduced in glibc 2.16. It must be versioned separately
+# for LD_PRELOAD interposition to work on binaries compiled against glibc 2.16+.
+# The version inheritance ensures this section is compatible with the base version.
+GLIBC_2.16 {
+  global:
+    aligned_alloc;
+} @ALLOC8_GLIBC_BASE_VERSION@;
