@@ -28,8 +28,11 @@ jobs:
           echo "=== C23 free_sized/free_aligned_sized ==="
           nm -D build/examples/simple_heap/libsimple_heap.so | grep -E ' T (free_sized|free_aligned_sized)'
 
-      - name: Test interposition (LD_PRELOAD)
+      - name: Test interposition - basic (LD_PRELOAD)
         run: LD_PRELOAD=build/examples/simple_heap/libsimple_heap.so ./build/tests/test_basic_alloc
+
+      - name: Test interposition - malloc API (LD_PRELOAD)
+        run: LD_PRELOAD=build/examples/simple_heap/libsimple_heap.so ./build/tests/test_malloc_api
 
   build-linux-diehard:
     runs-on: ubuntu-latest
@@ -50,8 +53,11 @@ jobs:
           echo "=== DieHard exported symbols ==="
           nm -D build/examples/diehard/libdiehard_alloc8.so | grep -E 'malloc|free|xxfree_sized'
 
-      - name: Test DieHard interposition (LD_PRELOAD)
+      - name: Test DieHard interposition - basic (LD_PRELOAD)
         run: LD_PRELOAD=build/examples/diehard/libdiehard_alloc8.so ./build/tests/test_basic_alloc
+
+      - name: Test DieHard interposition - malloc API (LD_PRELOAD)
+        run: LD_PRELOAD=build/examples/diehard/libdiehard_alloc8.so ./build/tests/test_malloc_api
 
       - name: Test DieHard threadtest (LD_PRELOAD)
         run: LD_PRELOAD=build/examples/diehard/libdiehard_alloc8.so ./build/tests/threadtest 4 100 1000
@@ -75,8 +81,11 @@ jobs:
           echo "=== Hoard exported symbols ==="
           nm -D build/examples/hoard/libhoard_alloc8.so | grep -E 'malloc|free|xxfree_sized'
 
-      - name: Test Hoard interposition (LD_PRELOAD)
+      - name: Test Hoard interposition - basic (LD_PRELOAD)
         run: LD_PRELOAD=build/examples/hoard/libhoard_alloc8.so ./build/tests/test_basic_alloc
+
+      - name: Test Hoard interposition - malloc API (LD_PRELOAD)
+        run: LD_PRELOAD=build/examples/hoard/libhoard_alloc8.so ./build/tests/test_malloc_api
 
       - name: Test Hoard threadtest (LD_PRELOAD)
         # Hoard threadtest may crash under high thread contention in CI
@@ -100,8 +109,11 @@ jobs:
       - name: Check exported symbols
         run: nm -gU build/examples/simple_heap/libsimple_heap.dylib | grep -E 'free_sized|free_aligned_sized'
 
-      - name: Test interposition (DYLD_INSERT_LIBRARIES)
+      - name: Test interposition - basic (DYLD_INSERT_LIBRARIES)
         run: DYLD_INSERT_LIBRARIES=build/examples/simple_heap/libsimple_heap.dylib ./build/tests/test_basic_alloc
+
+      - name: Test interposition - malloc API (DYLD_INSERT_LIBRARIES)
+        run: DYLD_INSERT_LIBRARIES=build/examples/simple_heap/libsimple_heap.dylib ./build/tests/test_malloc_api
 
   build-macos-diehard:
     runs-on: macos-latest
@@ -124,8 +136,11 @@ jobs:
           echo "=== DieHard exported symbols ==="
           nm -gU build/examples/diehard/libdiehard_alloc8.dylib | grep -E 'malloc|free' || echo "(symbols may be LTO-internalized)"
 
-      - name: Test DieHard interposition (DYLD_INSERT_LIBRARIES)
+      - name: Test DieHard interposition - basic (DYLD_INSERT_LIBRARIES)
         run: DYLD_INSERT_LIBRARIES=build/examples/diehard/libdiehard_alloc8.dylib ./build/tests/test_basic_alloc
+
+      - name: Test DieHard interposition - malloc API (DYLD_INSERT_LIBRARIES)
+        run: DYLD_INSERT_LIBRARIES=build/examples/diehard/libdiehard_alloc8.dylib ./build/tests/test_malloc_api
 
   build-windows:
     runs-on: windows-latest

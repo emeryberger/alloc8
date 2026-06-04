@@ -4,6 +4,12 @@
 add_executable(test_basic_alloc test_basic_alloc.cpp)
 target_compile_features(test_basic_alloc PRIVATE cxx_std_17)
 
+# Comprehensive malloc API test (C for maximum portability)
+add_executable(test_malloc_api test_malloc_api.c)
+if(NOT WIN32)
+  target_link_libraries(test_malloc_api PRIVATE pthread)
+endif()
+
 # threadtest - multi-threaded allocator benchmark from Hoard
 add_executable(threadtest threadtest.cpp)
 target_compile_features(threadtest PRIVATE cxx_std_17)
@@ -11,13 +17,14 @@ if(NOT WIN32)
   target_link_libraries(threadtest PRIVATE pthread)
 endif()
 
-# Add basic test (without interposition - just tests the test itself)
+# Add basic tests (without interposition - just tests the tests themselves)
 add_test(NAME test_basic_alloc_native COMMAND test_basic_alloc)
+add_test(NAME test_malloc_api_native COMMAND test_malloc_api)
 
 # If examples are built, add tests with interposition
 if(TARGET simple_heap)
   if(APPLE)
-    set(PRELOAD_ENV "DYLD_INSERT_LIBRARIES=$<TARGET_FILE:simple_heap>")
+    set(PRELOAD_ENV "DYLD_INSERT_LIBRARIES=$<TARGET_FILE:simple_heap>;DYLD_FORCE_FLAT_NAMESPACE=1")
   elseif(UNIX)
     set(PRELOAD_ENV "LD_PRELOAD=$<TARGET_FILE:simple_heap>")
   endif()
@@ -27,6 +34,13 @@ if(TARGET simple_heap)
              COMMAND ${CMAKE_COMMAND} -E env ${PRELOAD_ENV}
                      $<TARGET_FILE:test_basic_alloc>)
     set_tests_properties(test_basic_alloc_interposed PROPERTIES
+      DEPENDS simple_heap
+    )
+
+    add_test(NAME test_malloc_api_interposed
+             COMMAND ${CMAKE_COMMAND} -E env ${PRELOAD_ENV}
+                     $<TARGET_FILE:test_malloc_api>)
+    set_tests_properties(test_malloc_api_interposed PROPERTIES
       DEPENDS simple_heap
     )
   endif()
