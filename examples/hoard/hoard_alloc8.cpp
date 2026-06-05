@@ -84,6 +84,12 @@ extern "C" {
 extern "C" {
 
 ALLOC8_EXPORT void* xxmalloc(size_t sz) {
+  // Debug: catch large allocations early
+  if (sz > 1024 * 1024) {
+    char buf[128];
+    int len = snprintf(buf, sizeof(buf), "[DEBUG] xxmalloc ENTRY: sz=%zu\n", sz);
+    write(2, buf, len);
+  }
 #if defined(_WIN32)
   // Windows: Single TLS lookup - getCustomHeap() returns nullptr if not ready
   auto* heap = getCustomHeap();
