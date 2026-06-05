@@ -790,14 +790,17 @@ static void test_leak_aligned_allocs(void) {
 
     size_t growth = (rss_after[2] > rss_after[1]) ? (rss_after[2] - rss_after[1]) : 0;
     size_t per_cycle_alloc = N * alloc_size;
+    /* Use 2x threshold to account for allocators that intentionally overprovision
+     * (e.g., DieHard uses ~2x memory for probabilistic memory safety) */
+    size_t threshold = per_cycle_alloc * 2;
 
-    /* Flag if growth exceeds the per-cycle allocation - indicates real leak */
-    if (growth > per_cycle_alloc) {
+    /* Flag if growth exceeds the threshold - indicates real leak */
+    if (growth > threshold) {
         char msg[256];
         snprintf(msg, sizeof(msg),
                  "memory growing between cycles: c1=%zuKB, c2=%zuKB, c3=%zuKB (growth=%zuKB, threshold=%zuKB)",
                  rss_after[0]/1024, rss_after[1]/1024, rss_after[2]/1024,
-                 growth/1024, per_cycle_alloc/1024);
+                 growth/1024, threshold/1024);
         WARN(msg);
         return;
     }

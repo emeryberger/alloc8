@@ -181,6 +181,10 @@ void* xxrealloc(void* ptr, size_t sz) {
 }
 
 void* xxcalloc(size_t count, size_t sz) {
+  // Check for overflow
+  if (sz != 0 && count > SIZE_MAX / sz) {
+    return nullptr;
+  }
   size_t totalSize = count * sz;
   void* ptr = xxmalloc(totalSize);
   if (ptr != nullptr) {

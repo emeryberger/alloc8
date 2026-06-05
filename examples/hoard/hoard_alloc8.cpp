@@ -106,7 +106,7 @@ ALLOC8_EXPORT void* xxmalloc(size_t sz) {
       if (ALLOC8_LIKELY(ptr != nullptr)) {
         return ptr;
       }
-      fprintf(stderr, "Hoard: INTERNAL FAILURE.\n");
+      fprintf(stderr, "Hoard: INTERNAL FAILURE - malloc(%zu) returned NULL.\n", sz);
       abort();
     }
     // TLS initialized but heap not set for this thread - use getCustomHeap()
