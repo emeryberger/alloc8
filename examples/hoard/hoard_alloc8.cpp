@@ -105,7 +105,17 @@ ALLOC8_EXPORT void* xxmalloc(size_t sz) {
   // Unix: Check initializedTSD FIRST before accessing __thread variables!
   // TLS is not available during early library initialization on macOS.
   // Accessing __thread before TLS is ready causes a crash.
+  if (sz > 1024 * 1024) {
+    char buf[128];
+    int len = snprintf(buf, sizeof(buf), "[DEBUG] Checking TSD: init=%d\n", initializedTSD ? 1 : 0);
+    write(2, buf, len);
+  }
   if (ALLOC8_LIKELY(initializedTSD)) {
+    if (sz > 1024 * 1024) {
+      char buf[128];
+      int len = snprintf(buf, sizeof(buf), "[DEBUG] Checking heap: %p\n", (void*)theCustomHeap);
+      write(2, buf, len);
+    }
     // TLS is safe to access now
     if (ALLOC8_LIKELY(theCustomHeap != nullptr)) {
       // Fast path: direct TLS access
