@@ -9,7 +9,6 @@
 #include <cstdio>
 #include <new>
 #include <cstring>
-#include <unistd.h>
 
 // Platform-specific branch prediction hints
 #if defined(_MSC_VER)
@@ -84,12 +83,6 @@ extern "C" {
 extern "C" {
 
 ALLOC8_EXPORT void* xxmalloc(size_t sz) {
-  // Debug: catch large allocations early
-  if (sz > 1024 * 1024) {
-    char buf[128];
-    int len = snprintf(buf, sizeof(buf), "[DEBUG] xxmalloc ENTRY: sz=%zu\n", sz);
-    write(2, buf, len);
-  }
 #if defined(_WIN32)
   // Windows: Single TLS lookup - getCustomHeap() returns nullptr if not ready
   auto* heap = getCustomHeap();
@@ -105,34 +98,11 @@ ALLOC8_EXPORT void* xxmalloc(size_t sz) {
   // Unix: Check initializedTSD FIRST before accessing __thread variables!
   // TLS is not available during early library initialization on macOS.
   // Accessing __thread before TLS is ready causes a crash.
-  if (sz > 1024 * 1024) {
-    char buf[128];
-    int len = snprintf(buf, sizeof(buf), "[DEBUG] Checking TSD: init=%d\n", initializedTSD ? 1 : 0);
-    write(2, buf, len);
-  }
   if (ALLOC8_LIKELY(initializedTSD)) {
-    if (sz > 1024 * 1024) {
-      char buf[128];
-      int len = snprintf(buf, sizeof(buf), "[DEBUG] Checking heap: %p\n", (void*)theCustomHeap);
-      write(2, buf, len);
-    }
     // TLS is safe to access now
     if (ALLOC8_LIKELY(theCustomHeap != nullptr)) {
       // Fast path: direct TLS access
-      // Debug: catch large allocations that might cause issues
-      if (sz > 1024 * 1024) {
-        // Use write() for immediate output without buffering
-        char buf[256];
-        int len = snprintf(buf, sizeof(buf), "[DEBUG] Large alloc BEFORE: sz=%zu, heap=%p, parent=%p\n",
-                sz, (void*)theCustomHeap, (void*)getMainHoardHeap());
-        write(2, buf, len);
-      }
       void* ptr = theCustomHeap->malloc(sz);
-      if (sz > 1024 * 1024) {
-        char buf[256];
-        int len = snprintf(buf, sizeof(buf), "[DEBUG] Large alloc AFTER: ptr=%p\n", ptr);
-        write(2, buf, len);
-      }
       if (ALLOC8_LIKELY(ptr != nullptr)) {
         return ptr;
       }

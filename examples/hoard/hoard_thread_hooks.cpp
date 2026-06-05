@@ -89,6 +89,13 @@ volatile int xxthread_created_flag = 0;
 
 } // extern "C"
 
+// Initialize the main thread's heap.
+// This constructor runs early to ensure TLS is set up before any allocations.
+__attribute__((constructor(200)))
+static void init_main_thread() {
+  getCustomHeap();
+}
+
 // Sync alloc8's flag with Hoard's anyThreadCreated
 // This is a bit of a hack - ideally Hoard would use xxthread_created_flag directly
 __attribute__((constructor(300)))
