@@ -106,7 +106,9 @@ ALLOC8_EXPORT void* xxmalloc(size_t sz) {
       if (ALLOC8_LIKELY(ptr != nullptr)) {
         return ptr;
       }
-      fprintf(stderr, "Hoard: INTERNAL FAILURE - malloc(%zu) returned NULL.\n", sz);
+      // This shouldn't happen - Hoard's BigHeap should handle any allocation size
+      fprintf(stderr, "Hoard: INTERNAL FAILURE - malloc(%zu) returned NULL (heap=%p).\n",
+              sz, (void*)theCustomHeap);
       abort();
     }
     // TLS initialized but heap not set for this thread - use getCustomHeap()

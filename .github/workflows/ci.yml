@@ -73,6 +73,13 @@ jobs:
       - name: Build
         run: cmake --build build
 
+      - name: Show Hoard version
+        run: |
+          echo "Hoard commit:"
+          git -C build/_deps/hoard-src rev-parse HEAD 2>/dev/null || echo "unknown"
+          echo "Heap-Layers commit:"
+          git -C build/_deps/heaplayers-src rev-parse HEAD 2>/dev/null || echo "unknown"
+
       - name: Run tests (native)
         run: ctest --test-dir build --output-on-failure
 
