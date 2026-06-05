@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <new>
 #include <cstring>
+#include <unistd.h>
 
 // Platform-specific branch prediction hints
 #if defined(_MSC_VER)
@@ -104,11 +105,18 @@ ALLOC8_EXPORT void* xxmalloc(size_t sz) {
       // Fast path: direct TLS access
       // Debug: catch large allocations that might cause issues
       if (sz > 1024 * 1024) {
-        fprintf(stderr, "[DEBUG] Large alloc: sz=%zu, heap=%p, parent=%p\n",
+        // Use write() for immediate output without buffering
+        char buf[256];
+        int len = snprintf(buf, sizeof(buf), "[DEBUG] Large alloc BEFORE: sz=%zu, heap=%p, parent=%p\n",
                 sz, (void*)theCustomHeap, (void*)getMainHoardHeap());
-        fflush(stderr);
+        write(2, buf, len);
       }
       void* ptr = theCustomHeap->malloc(sz);
+      if (sz > 1024 * 1024) {
+        char buf[256];
+        int len = snprintf(buf, sizeof(buf), "[DEBUG] Large alloc AFTER: ptr=%p\n", ptr);
+        write(2, buf, len);
+      }
       if (ALLOC8_LIKELY(ptr != nullptr)) {
         return ptr;
       }
