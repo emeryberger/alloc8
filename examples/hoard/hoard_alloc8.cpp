@@ -102,6 +102,12 @@ ALLOC8_EXPORT void* xxmalloc(size_t sz) {
     // TLS is safe to access now
     if (ALLOC8_LIKELY(theCustomHeap != nullptr)) {
       // Fast path: direct TLS access
+      // Debug: catch large allocations that might cause issues
+      if (sz > 1024 * 1024) {
+        fprintf(stderr, "[DEBUG] Large alloc: sz=%zu, heap=%p, parent=%p\n",
+                sz, (void*)theCustomHeap, (void*)getMainHoardHeap());
+        fflush(stderr);
+      }
       void* ptr = theCustomHeap->malloc(sz);
       if (ALLOC8_LIKELY(ptr != nullptr)) {
         return ptr;
