@@ -565,9 +565,10 @@ size_t replace_internal_malloc_zone_size(malloc_zone_t*, const void* ptr) {
   // xxmalloc_usable_size() on a non-issued pointer is undefined behavior.
   if (!ptr) return 0;
   if (libsystem_zone_for(ptr)) return 0;
-  if (!maybe_owned(ptr)) return 0;
+  if (!is_owned(ptr)) return 0;
   size_t s = xxmalloc_usable_size((void*)ptr);
   if (s) return s;
+  if (have_owns_hook()) return 1;  // owned but unsized; table is unused.
   s = lookup_size(ptr);
   return s ? s : 1;
 }
@@ -651,7 +652,7 @@ void replace_malloc_zone_free_definite_size(malloc_zone_t*, void* ptr, size_t sz
   }
   // Ours: pass the size hint through so allocators that implement free_sized
   // can use the O(1) path; xxfree_sized falls back to xxfree internally.
-  forget_size(ptr);
+  untrack_owned(ptr);
   xxfree_sized(ptr, sz);
 }
 

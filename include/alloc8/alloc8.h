@@ -174,6 +174,16 @@ extern "C" {
   // Thread hooks (optional - only if ALLOC8_THREAD_REDIRECT used)
   ALLOC8_EXPORT void xxthread_init(void);
   ALLOC8_EXPORT void xxthread_cleanup(void);
+
+  // Ownership hook (optional). If both xxowns_active() returns true and
+  // xxowns(ptr) is provided, alloc8 skips its per-allocation hash table
+  // and uses xxowns() as the sole ownership predicate on free/realloc/size.
+  // Allocators whose memory comes from fixed regions (never unmapped) can
+  // answer ownership from their own metadata with no per-object bookkeeping.
+  // Default weak definitions (returns false / not active) are in the platform
+  // wrapper; provide strong definitions to override.
+  ALLOC8_EXPORT bool xxowns_active(void);
+  ALLOC8_EXPORT bool xxowns(const void* ptr);
 }
 
 // ─── USAGE INSTRUCTIONS ───────────────────────────────────────────────────────
