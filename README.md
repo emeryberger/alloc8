@@ -201,6 +201,29 @@ target_link_libraries(myalloc PRIVATE alloc8::interpose)
 
 See the Hoard example for a complete implementation using thread hooks.
 
+## Ownership Hook (Optional, macOS)
+
+Allocators whose memory lives in fixed regions (never unmapped) can provide an
+`xxowns(ptr)` hook to bypass alloc8's per-allocation hash table on the
+free/realloc/malloc_size hot paths. This eliminates one hash-table
+insert+lookup+delete per allocation cycle.
+
+```cpp
+// In your allocator .cpp, alongside ALLOC8_REDIRECT:
+extern "C" bool xxowns_active() { return true; }
+
+extern "C" bool xxowns(const void* ptr) {
+    // Return true iff ptr was returned by your allocator.
+    // Must be safe on ANY address (including libSystem/libobjc pointers).
+    return my_heap_region_contains(ptr);
+}
+```
+
+When `xxowns_active()` returns true, alloc8 skips `mark_owned`/`forget_size`
+bookkeeping and uses `xxowns()` as the sole ownership predicate. When not
+provided, weak default definitions (return false) preserve the existing
+hash-table behavior with no overhead.
+
 ## Allocator Requirements
 
 Your allocator class must implement:
@@ -220,6 +243,8 @@ Optional methods:
 | `void* realloc(void* ptr, size_t sz)` | Reallocation (default provided) |
 | `void threadInit()` | Called when new thread starts |
 | `void threadCleanup()` | Called when thread exits |
+| `bool xxowns(const void* ptr)` | Ownership predicate (macOS, skips hash table) |
+| `bool xxowns_active()` | Return true to enable xxowns hook |
 
 ## Building alloc8
 

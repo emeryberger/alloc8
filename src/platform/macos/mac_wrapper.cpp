@@ -35,6 +35,31 @@ extern "C" {
   void  xxfree_sized(void*, size_t);
   void  xxfree_aligned_sized(void*, size_t, size_t);
 
+  // ─── OPTIONAL OWNERSHIP HOOK (allocator-agnostic) ──────────────────────────
+  //
+  // An allocator MAY define xxowns(ptr): a predicate that returns true iff the
+  // pointer was handed out by the allocator. It must be safe to call on any
+  // address (including foreign libSystem/libobjc pointers) and have no false
+  // positives or negatives.
+  //
+  // When present, alloc8 uses it as the ownership test on the free / realloc /
+  // malloc_size hot paths instead of consulting its internal ptr->size table,
+  // and skips populating that table on every allocation. This removes the
+  // per-object hash-table traffic for allocators that can answer ownership
+  // from their own metadata (e.g. an allocator whose memory comes from regions
+  // it never unmaps). Allocators that do NOT define xxowns are unaffected:
+  // g_have_owns stays false and the original size-table path runs.
+  //
+  // Weak default definitions. Allocators that can answer ownership from their
+  // own metadata provide strong definitions that override these. The weak
+  // definitions ensure the linker always resolves symbols (required for LTO).
+  //
+  // xxowns_active: true iff the allocator provides a real xxowns(). Alloc8
+  // checks this once at init time to decide whether to skip the hash table.
+  // xxowns: the ownership predicate itself.
+  __attribute__((weak)) bool xxowns_active() { return false; }
+  __attribute__((weak)) bool xxowns(const void*) { return false; }
+
   // Functions we interpose on (need declarations for MAC_INTERPOSE)
   void  vfree(void*);
   void _malloc_fork_prepare(void);
@@ -96,21 +121,73 @@ extern std::atomic<uint64_t> g_count_size_user, g_count_size_libsys, g_count_siz
 
 static void alloc8_init_once();
 static inline void ensure_init() {
-  if (g_init_state.load(std::memory_order_acquire) != /*INIT_DONE=*/2) {
+  // Initialization finishes in a priority-101 load constructor, before any
+  // user allocation, so on the hot path this is reliably already done.
+  if (__builtin_expect(g_init_state.load(std::memory_order_acquire) != /*INIT_DONE=*/2, 0)) {
     alloc8_init_once();
   }
 }
 extern "C" void alloc8_dump_stats(int);
 extern "C" void alloc8_record_alloc_size(size_t);
 
+// True only when the user set ALLOC8_STATS. Off in normal use, so the
+// counters/histogram are entirely skipped on the hot path (one predicted-not-
+// taken branch instead of an atomic RMW + an out-of-line record call).
+static inline bool stats_active() {
+  return __builtin_expect(g_stats_enabled.load(std::memory_order_relaxed), 0);
+}
+
 static inline void bump(std::atomic<uint64_t>& c) {
-  if (!g_stats_enabled.load(std::memory_order_relaxed)) return;
+  if (!stats_active()) return;
   uint64_t v = c.fetch_add(1, std::memory_order_relaxed) + 1;
   // Dump every N total user-allocator allocations from one chosen counter
   // (g_count_malloc_user is a good proxy for "is the user allocator active").
   // Cheap and signal-free; avoids both atexit/_exit issues and SIGUSR1
   // collisions inside Firefox.
   if (&c == &g_count_malloc_user && (v % 200000) == 0) alloc8_dump_stats(0);
+}
+
+// Inlinable wrapper around the (out-of-line) size-histogram recorder: the
+// guard is inlined so the common stats-off path is a single branch with no
+// call. Pairs the malloc-side counter bump with the histogram update so each
+// allocation entry point does its stats work behind one check.
+static inline void bump_and_record(std::atomic<uint64_t>& c, size_t sz) {
+  if (!stats_active()) return;
+  bump(c);
+  alloc8_record_alloc_size(sz);
+}
+
+// ─── OWNERSHIP DISPATCH (xxowns hook vs. internal size table) ─────────────────
+//
+// g_have_owns: true iff the allocator supplied xxowns(). Checked once at
+// static-init time via xxowns_active() and cached as a plain global so the
+// hot path is a single load + predicted branch.
+static const bool g_have_owns = xxowns_active();
+
+static inline bool have_owns_hook() {
+  return g_have_owns;
+}
+
+// is_owned(): the ownership predicate used on every free / realloc /
+// malloc_size. Prefers the allocator's xxowns() hook; otherwise falls back to
+// the internal ptr->size table (maybe_owned). Both are safe on any address.
+static inline bool is_owned(const void* ptr) {
+  if (have_owns_hook()) return xxowns(ptr);
+  return maybe_owned(ptr);
+}
+
+// track_owned() / untrack_owned(): maintain the internal size table. These are
+// no-ops when xxowns() is present, since the table is then unused — that is
+// the entire point of the hook (no per-object hash traffic). When absent they
+// behave exactly as before.
+static inline void track_owned(const void* ptr, size_t sz) {
+  if (have_owns_hook()) return;
+  mark_owned(ptr, sz);
+}
+
+static inline void untrack_owned(const void* ptr) {
+  if (have_owns_hook()) return;
+  forget_size(ptr);
 }
 
 // ─── DISPATCH HELPERS ─────────────────────────────────────────────────────────
@@ -124,32 +201,36 @@ static inline void bump(std::atomic<uint64_t>& c) {
 // getSize on pointers they validly issued. We then fall back to the size
 // table populated at allocation time (mac_zones.cpp), which libobjc's
 // `malloc_size(p) >= sizeof(objc_class)` validation requires.
+//
+// With the xxowns() hook the table is empty, so the size answer comes from
+// xxmalloc_usable_size alone (the allocator must answer getSize for pointers
+// it owns); the lookup_size fallback only applies in the non-hook path.
 static inline size_t owned_size(void* ptr) {
-  if (!maybe_owned(ptr)) return 0;
+  if (!is_owned(ptr)) return 0;
   size_t s = xxmalloc_usable_size(ptr);
   if (s) return s;
+  if (have_owns_hook()) return 1;  // owned but unsized: best-effort non-zero.
   s = lookup_size(ptr);
   return s ? s : 1;
 }
 
 void* replace_malloc(size_t sz) {
   ensure_init();
-  if (g_passthrough) { bump(g_count_malloc_pass); return g_sys_malloc(sz); }
-  bump(g_count_malloc_user);
-  alloc8_record_alloc_size(sz);
+  if (__builtin_expect(g_passthrough, 0)) { bump(g_count_malloc_pass); return g_sys_malloc(sz); }
+  bump_and_record(g_count_malloc_user, sz);
   void* p = xxmalloc(sz);
-  if (p) mark_owned(p, sz ? sz : 1);
+  if (p) track_owned(p, sz ? sz : 1);
   return p;
 }
 
 void replace_free(void* ptr) {
   if (!ptr) return;
   ensure_init();
-  if (g_passthrough) { bump(g_count_free_pass); g_sys_free(ptr); return; }
-  bool ours = maybe_owned(ptr);
-  if (ours) {
+  if (__builtin_expect(g_passthrough, 0)) { bump(g_count_free_pass); g_sys_free(ptr); return; }
+  bool ours = is_owned(ptr);
+  if (__builtin_expect(ours, 1)) {
     bump(g_count_free_user);
-    forget_size(ptr);
+    untrack_owned(ptr);
     xxfree(ptr);
     return;
   }
@@ -201,15 +282,15 @@ void* replace_realloc(void* ptr, size_t sz) {
   }
 
   // Ours? Resize in our allocator.
-  if (maybe_owned(ptr)) {
+  if (is_owned(ptr)) {
     size_t oldSize = owned_size(ptr);
     if ((oldSize / 2 < sz) && (sz <= oldSize)) return ptr;
     void* newPtr = xxmalloc(sz);
     if (newPtr) {
-      mark_owned(newPtr, sz);
+      track_owned(newPtr, sz);
       size_t copySize = (oldSize < sz) ? oldSize : sz;
       if (copySize) memcpy(newPtr, ptr, copySize);
-      forget_size(ptr);
+      untrack_owned(ptr);
       xxfree(ptr);
     }
     return newPtr;
@@ -224,7 +305,7 @@ void* replace_realloc(void* ptr, size_t sz) {
   // leave the original untouched (we can't tell its size or who to free to).
   void* newPtr = xxmalloc(sz);
   if (newPtr) {
-    mark_owned(newPtr, sz);
+    track_owned(newPtr, sz);
     memcpy(newPtr, ptr, sz);  // best effort: may over-read; same risk libc has.
   }
   return newPtr;
@@ -240,10 +321,9 @@ void* replace_reallocf(void* ptr, size_t sz) {
 void* replace_calloc(size_t count, size_t size) {
   ensure_init();
   if (g_passthrough) { bump(g_count_calloc_pass); return g_sys_calloc(count, size); }
-  bump(g_count_calloc_user);
-  alloc8_record_alloc_size(count * size);
+  bump_and_record(g_count_calloc_user, count * size);
   void* p = xxcalloc(count, size);
-  if (p) mark_owned(p, count * size);
+  if (p) track_owned(p, count * size);
   return p;
 }
 
@@ -252,7 +332,7 @@ char* replace_strdup(const char* s) {
   size_t len = strlen(s) + 1;
   char* newStr = (char*)xxmalloc(len);
   if (newStr) {
-    mark_owned(newStr, len);
+    track_owned(newStr, len);
     memcpy(newStr, s, len);
   }
   return newStr;
@@ -260,7 +340,7 @@ char* replace_strdup(const char* s) {
 
 void* replace_memalign(size_t alignment, size_t size) {
   void* p = xxmemalign(alignment, size);
-  if (p) mark_owned(p, size ? size : 1);
+  if (p) track_owned(p, size ? size : 1);
   return p;
 }
 
@@ -269,7 +349,7 @@ void* replace_aligned_alloc(size_t alignment, size_t size) {
     return nullptr;
   }
   void* p = xxmemalign(alignment, size);
-  if (p) mark_owned(p, size);
+  if (p) track_owned(p, size);
   return p;
 }
 
@@ -288,14 +368,14 @@ int replace_posix_memalign(void** memptr, size_t alignment, size_t size) {
   if (!ptr && size != 0) {
     return ENOMEM;
   }
-  if (ptr) mark_owned(ptr, size ? size : 1);
+  if (ptr) track_owned(ptr, size ? size : 1);
   *memptr = ptr;
   return 0;
 }
 
 void* replace_valloc(size_t sz) {
   void* p = xxmemalign(ALLOC8_PAGE_SIZE, sz);
-  if (p) mark_owned(p, sz ? sz : 1);
+  if (p) track_owned(p, sz ? sz : 1);
   return p;
 }
 
@@ -332,9 +412,9 @@ void replace_free_sized(void* ptr, size_t sz) {
   if (!ptr) return;
   ensure_init();
   if (g_passthrough) { bump(g_count_free_pass); g_sys_free(ptr); return; }
-  if (maybe_owned(ptr)) {
+  if (is_owned(ptr)) {
     bump(g_count_free_user);
-    forget_size(ptr);
+    untrack_owned(ptr);
     xxfree_sized(ptr, sz);
     return;
   }
@@ -351,9 +431,9 @@ void replace_free_aligned_sized(void* ptr, size_t alignment, size_t sz) {
   if (!ptr) return;
   ensure_init();
   if (g_passthrough) { bump(g_count_free_pass); g_sys_free(ptr); return; }
-  if (maybe_owned(ptr)) {
+  if (is_owned(ptr)) {
     bump(g_count_free_user);
-    forget_size(ptr);
+    untrack_owned(ptr);
     xxfree_aligned_sized(ptr, alignment, sz);
     return;
   }

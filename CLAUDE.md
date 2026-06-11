@@ -125,6 +125,14 @@ For thread-aware allocators:
 - `xxthread_cleanup()` - Called when a thread exits
 - `xxthread_created_flag` - Set when first thread is created (for lock optimization)
 
+### xxowns Interface (Optional, macOS)
+
+For allocators that can answer ownership from their own metadata:
+- `xxowns_active()` - Return true to activate the hook (weak default returns false)
+- `xxowns(const void* ptr)` - Return true iff ptr was issued by the allocator (weak default returns false)
+
+When active, alloc8 skips its per-allocation hash table (`mark_owned`/`forget_size`) and uses `xxowns()` as the sole ownership predicate on free/realloc/malloc_size. Both must be safe on any address (including libSystem/libobjc pointers). Uses weak *definitions* (not declarations) so the symbols resolve correctly under LTO on macOS.
+
 ## Important Implementation Details
 
 ### macOS Specifics
@@ -134,6 +142,7 @@ For thread-aware allocators:
 - Full `malloc_zone_t` implementation enables interposition WITHOUT `DYLD_FORCE_FLAT_NAMESPACE`
 - Must provide forward declarations for interposed functions (vfree, _malloc_fork_*, C++ operators)
 - C++ operator mangled names: `_Znwm` (new), `_Znam` (new[]), `_ZdlPv` (delete), `_ZdaPv` (delete[])
+- `xxowns`/`xxowns_active` use weak *definitions* (not declarations) because Apple's LTO linker cannot resolve a weak extern to null within the same link unit — a weak declaration alone causes `ld: symbol(s) not found`
 
 ### Linux Specifics
 - Uses version script (`version_script.map`) for GLIBC symbol versioning
