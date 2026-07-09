@@ -159,6 +159,48 @@ static inline void bump_and_record(std::atomic<uint64_t>& c, size_t sz) {
 
 // ─── OWNERSHIP DISPATCH (xxowns hook vs. internal size table) ─────────────────
 //
+// Three dispatch modes, from fastest to slowest:
+//
+// 1. Compile-time inline hook (ALLOC8_XXOWNS_INLINE_HEADER): the embedding
+//    allocator names a header that defines
+//        static inline bool alloc8_xxowns_inline(const void* p);
+//    The predicate must be safe on any address with no false positives or
+//    negatives (same contract as xxowns()). Because the interpose sources
+//    are compiled inside the consumer's target, the predicate inlines
+//    straight into replace_free/replace_realloc/replace_malloc_size —
+//    no call, no runtime "do we have a hook?" branch, and track/untrack
+//    disappear entirely. The weak-symbol machinery below cannot achieve
+//    this: ThinLTO will not inline a prevailing strong definition over a
+//    module-local weak one, so xxowns() always costs a call per free.
+//
+// 2. Runtime xxowns() hook: allocator provides strong definitions of
+//    xxowns()/xxowns_active(). g_have_owns is checked once at static-init
+//    time and cached, so the hot path is a load + predicted branch + call.
+//
+// 3. Internal ptr->size table: no hook at all; every malloc/free pays a
+//    hash insert/erase, and the table saturates at ~4M live objects.
+
+#if defined(ALLOC8_XXOWNS_INLINE_HEADER)
+
+// Escape the surrounding extern "C" block: the consumer's header may
+// define templates or other C++-linkage-only constructs.
+}
+#include ALLOC8_XXOWNS_INLINE_HEADER
+extern "C" {
+
+static inline bool have_owns_hook() {
+  return true;
+}
+
+static inline bool is_owned(const void* ptr) {
+  return alloc8_xxowns_inline(ptr);
+}
+
+static inline void track_owned(const void*, size_t) {}
+static inline void untrack_owned(const void*) {}
+
+#else
+
 // g_have_owns: true iff the allocator supplied xxowns(). Checked once at
 // static-init time via xxowns_active() and cached as a plain global so the
 // hot path is a single load + predicted branch.
@@ -189,6 +231,8 @@ static inline void untrack_owned(const void* ptr) {
   if (have_owns_hook()) return;
   forget_size(ptr);
 }
+
+#endif // ALLOC8_XXOWNS_INLINE_HEADER
 
 // ─── DISPATCH HELPERS ─────────────────────────────────────────────────────────
 //
