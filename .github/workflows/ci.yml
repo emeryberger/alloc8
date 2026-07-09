@@ -97,6 +97,36 @@ jobs:
       - name: Test Hoard threadtest (LD_PRELOAD)
         run: LD_PRELOAD=build/examples/hoard/libhoard_alloc8.so ./build/tests/threadtest 4 100 1000
 
+  # arm64: same as build-linux-hoard but on the aarch64 glibc ABI
+  # (baseline GLIBC_2.17). Guards the aligned_alloc symbol-versioning
+  # fix: with aligned_alloc exported below the baseline, ld.so silently
+  # bypasses LD_PRELOAD for it and test_malloc_api crashes.
+  build-linux-arm64-hoard:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (Hoard)
+        run: cmake -B build -DALLOC8_BUILD_TESTS=ON -DALLOC8_BUILD_EXAMPLES=ON -DALLOC8_BUILD_HOARD_EXAMPLE=ON
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Check aligned_alloc symbol version
+        run: |
+          echo "=== aligned_alloc export (must be at or above the aarch64 baseline GLIBC_2.17) ==="
+          objdump -T build/examples/hoard/libhoard_alloc8.so | grep aligned_alloc
+          objdump -T build/examples/hoard/libhoard_alloc8.so | grep aligned_alloc | grep -q "GLIBC_2.17" || exit 1
+
+      - name: Test Hoard interposition - basic (LD_PRELOAD)
+        run: LD_PRELOAD=build/examples/hoard/libhoard_alloc8.so ./build/tests/test_basic_alloc
+
+      - name: Test Hoard interposition - malloc API (LD_PRELOAD)
+        run: LD_PRELOAD=build/examples/hoard/libhoard_alloc8.so ./build/tests/test_malloc_api
+
+      - name: Test Hoard threadtest (LD_PRELOAD)
+        run: LD_PRELOAD=build/examples/hoard/libhoard_alloc8.so ./build/tests/threadtest 4 100 1000
+
   build-macos:
     runs-on: macos-latest
     steps:
