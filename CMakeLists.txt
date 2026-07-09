@@ -143,6 +143,18 @@ elseif(ALLOC8_PLATFORM_MACOS)
   add_library(alloc8_interpose INTERFACE)
   add_library(alloc8::interpose ALIAS alloc8_interpose)
 
+  # Compile-time inline ownership hook (see mac_wrapper.cpp): the consumer
+  # names a header defining `static inline bool alloc8_xxowns_inline(const
+  # void*)`. Because the interpose sources are compiled inside the consumer's
+  # target, the predicate inlines directly into the free/realloc/malloc_size
+  # hot paths - no per-call function call, unlike the runtime xxowns() hook.
+  set(ALLOC8_XXOWNS_INLINE_HEADER "" CACHE STRING
+    "Header defining alloc8_xxowns_inline() for compile-time ownership dispatch")
+  if(ALLOC8_XXOWNS_INLINE_HEADER)
+    target_compile_definitions(alloc8_interpose INTERFACE
+      ALLOC8_XXOWNS_INLINE_HEADER=\"${ALLOC8_XXOWNS_INLINE_HEADER}\")
+  endif()
+
   # Note: mac_zones.cpp is #included by mac_wrapper.cpp, not compiled separately
   set(ALLOC8_INTERPOSE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/mac_wrapper.cpp

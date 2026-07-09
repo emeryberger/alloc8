@@ -182,6 +182,18 @@ extern "C" {
   // answer ownership from their own metadata with no per-object bookkeeping.
   // Default weak definitions (returns false / not active) are in the platform
   // wrapper; provide strong definitions to override.
+  //
+  // Faster variant: define ALLOC8_XXOWNS_INLINE_HEADER (a quoted header
+  // name, or set the CMake cache variable of the same name) to a header
+  // providing
+  //     static inline bool alloc8_xxowns_inline(const void* p);
+  // with the same contract (safe on any address, no false positives or
+  // negatives). The predicate then inlines directly into the hot paths of
+  // the platform wrapper: no per-free call, no runtime hook check, and the
+  // per-allocation tracking compiles away entirely. Prefer this when the
+  // allocator is built together with alloc8 (the usual case); the runtime
+  // xxowns() hook always costs one function call per free because a weak
+  // module-local default blocks cross-module inlining under (Thin)LTO.
   ALLOC8_EXPORT bool xxowns_active(void);
   ALLOC8_EXPORT bool xxowns(const void* ptr);
 }
