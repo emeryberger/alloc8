@@ -100,6 +100,24 @@ if(ALLOC8_PLATFORM_LINUX)
   set(ALLOC8_GLIBC_BASE_VERSION "${ALLOC8_GLIBC_BASE_VERSION}"
       CACHE INTERNAL "GLIBC base version for exported malloc/etc.")
 
+  # aligned_alloc appeared in glibc 2.16, but a symbol version can never
+  # precede the architecture's ABI baseline: on aarch64 (baseline 2.17)
+  # binaries reference aligned_alloc@GLIBC_2.17, so exporting it under a
+  # hardcoded GLIBC_2.16 node leaves those references unbound and ld.so
+  # silently falls back to libc's aligned_alloc -- the resulting pointers
+  # then get freed into the interposed allocator (crash or leak).
+  # Export aligned_alloc at max(GLIBC_2.16, base version); when that is
+  # the base version it must live in the base node (a second node with
+  # the same version name would be a duplicate-definition error).
+  string(REPLACE "GLIBC_" "" _alloc8_base_ver "${ALLOC8_GLIBC_BASE_VERSION}")
+  if(_alloc8_base_ver VERSION_GREATER_EQUAL "2.16")
+    set(ALLOC8_ALIGNED_ALLOC_IN_BASE "aligned_alloc;")
+    set(ALLOC8_ALIGNED_ALLOC_NODE "")
+  else()
+    set(ALLOC8_ALIGNED_ALLOC_IN_BASE "")
+    set(ALLOC8_ALIGNED_ALLOC_NODE "GLIBC_2.16 {\n  global:\n    aligned_alloc;\n} ${ALLOC8_GLIBC_BASE_VERSION};")
+  endif()
+
   # Generate version script from template
   configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/linux/version_script.map.in
