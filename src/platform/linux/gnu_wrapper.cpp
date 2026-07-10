@@ -65,6 +65,7 @@ extern "C" {
 
 extern "C" ATTRIBUTE_EXPORT __attribute__((flatten))
 void* CUSTOM_PREFIX(malloc)(size_t sz) {
+  ALLOC8_SET_CALLER_RA();
   return xxmalloc(sz);
 }
 
@@ -77,16 +78,19 @@ void CUSTOM_PREFIX(free)(void* ptr) {
 
 extern "C" ATTRIBUTE_EXPORT __attribute__((flatten))
 void* CUSTOM_PREFIX(calloc)(size_t nelem, size_t elsize) {
+  ALLOC8_SET_CALLER_RA();
   return xxcalloc(nelem, elsize);
 }
 
 extern "C" ATTRIBUTE_EXPORT __attribute__((flatten))
 void* CUSTOM_PREFIX(realloc)(void* ptr, size_t sz) {
+  ALLOC8_SET_CALLER_RA();
   return xxrealloc(ptr, sz);
 }
 
 extern "C" ATTRIBUTE_EXPORT __attribute__((flatten))
 void* CUSTOM_PREFIX(reallocarray)(void* ptr, size_t nmemb, size_t size) {
+  ALLOC8_SET_CALLER_RA();
   // Overflow check
   if (ALLOC8_UNLIKELY(size != 0 && nmemb > SIZE_MAX / size)) {
     errno = ENOMEM;
@@ -97,11 +101,13 @@ void* CUSTOM_PREFIX(reallocarray)(void* ptr, size_t nmemb, size_t size) {
 
 extern "C" ATTRIBUTE_EXPORT __attribute__((flatten))
 void* CUSTOM_PREFIX(memalign)(size_t alignment, size_t size) __THROW {
+  ALLOC8_SET_CALLER_RA();
   return xxmemalign(alignment, size);
 }
 
 extern "C" ATTRIBUTE_EXPORT __attribute__((flatten))
 int CUSTOM_PREFIX(posix_memalign)(void** memptr, size_t alignment, size_t size) __THROW {
+  ALLOC8_SET_CALLER_RA();
   *memptr = nullptr;
 
   // Alignment must be power of 2 and multiple of sizeof(void*)
@@ -122,6 +128,7 @@ int CUSTOM_PREFIX(posix_memalign)(void** memptr, size_t alignment, size_t size) 
 
 extern "C" ATTRIBUTE_EXPORT __attribute__((flatten))
 void* CUSTOM_PREFIX(aligned_alloc)(size_t alignment, size_t size) __THROW {
+  ALLOC8_SET_CALLER_RA();
   // C11: size must be multiple of alignment
   if (alignment == 0 || (size % alignment) != 0) {
     return nullptr;
@@ -162,6 +169,7 @@ void CUSTOM_PREFIX(cfree)(void* ptr) {
 
 extern "C" ATTRIBUTE_EXPORT
 char* CUSTOM_PREFIX(strdup)(const char* s) {
+  ALLOC8_SET_CALLER_RA();
   if (!s) return nullptr;
   size_t len = strlen(s) + 1;
   char* newStr = (char*)xxmalloc(len);
@@ -173,6 +181,7 @@ char* CUSTOM_PREFIX(strdup)(const char* s) {
 
 extern "C" ATTRIBUTE_EXPORT
 char* CUSTOM_PREFIX(strndup)(const char* s, size_t n) {
+  ALLOC8_SET_CALLER_RA();
   if (!s) return nullptr;
   size_t len = strnlen(s, n);
   char* newStr = (char*)xxmalloc(len + 1);
@@ -187,11 +196,13 @@ char* CUSTOM_PREFIX(strndup)(const char* s, size_t n) {
 
 extern "C" ATTRIBUTE_EXPORT
 void* CUSTOM_PREFIX(valloc)(size_t sz) {
+  ALLOC8_SET_CALLER_RA();
   return xxmemalign(ALLOC8_PAGE_SIZE, sz);
 }
 
 extern "C" ATTRIBUTE_EXPORT
 void* CUSTOM_PREFIX(pvalloc)(size_t sz) {
+  ALLOC8_SET_CALLER_RA();
   // Round up to page size
   size_t pagesize = ALLOC8_PAGE_SIZE;
   size_t rounded = (sz + pagesize - 1) & ~(pagesize - 1);
@@ -228,6 +239,7 @@ struct mallinfo CUSTOM_PREFIX(mallinfo)() {
 
 extern "C" ATTRIBUTE_EXPORT
 char* CUSTOM_PREFIX(getcwd)(char* buf, size_t size) {
+  ALLOC8_SET_CALLER_RA();
   if (!buf) {
     if (size == 0) {
       size = PATH_MAX;
@@ -264,11 +276,11 @@ extern "C" {
 
 #if defined(__GLIBC__)
 extern "C" {
-  ATTRIBUTE_EXPORT void* __libc_malloc(size_t n) { return xxmalloc(n); }
+  ATTRIBUTE_EXPORT void* __libc_malloc(size_t n) { ALLOC8_SET_CALLER_RA(); return xxmalloc(n); }
   ATTRIBUTE_EXPORT void  __libc_free(void* p) { if (p) xxfree(p); }
-  ATTRIBUTE_EXPORT void* __libc_calloc(size_t a, size_t b) { return xxcalloc(a, b); }
-  ATTRIBUTE_EXPORT void* __libc_realloc(void* p, size_t n) { return xxrealloc(p, n); }
-  ATTRIBUTE_EXPORT void* __libc_memalign(size_t m, size_t n) { return xxmemalign(m, n); }
+  ATTRIBUTE_EXPORT void* __libc_calloc(size_t a, size_t b) { ALLOC8_SET_CALLER_RA(); return xxcalloc(a, b); }
+  ATTRIBUTE_EXPORT void* __libc_realloc(void* p, size_t n) { ALLOC8_SET_CALLER_RA(); return xxrealloc(p, n); }
+  ATTRIBUTE_EXPORT void* __libc_memalign(size_t m, size_t n) { ALLOC8_SET_CALLER_RA(); return xxmemalign(m, n); }
 }
 #endif
 
