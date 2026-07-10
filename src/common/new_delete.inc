@@ -14,6 +14,7 @@
 
 ATTRIBUTE_EXPORT __attribute__((flatten))
 void* operator new(std::size_t sz) {
+  ALLOC8_SET_CALLER_RA();
   void* ptr = xxmalloc(sz);
   if (!ptr) {
     throw std::bad_alloc();
@@ -23,6 +24,7 @@ void* operator new(std::size_t sz) {
 
 ATTRIBUTE_EXPORT __attribute__((flatten))
 void* operator new[](std::size_t sz) {
+  ALLOC8_SET_CALLER_RA();
   void* ptr = xxmalloc(sz);
   if (!ptr) {
     throw std::bad_alloc();
@@ -34,11 +36,13 @@ void* operator new[](std::size_t sz) {
 
 ATTRIBUTE_EXPORT __attribute__((flatten))
 void* operator new(std::size_t sz, const std::nothrow_t&) noexcept {
+  ALLOC8_SET_CALLER_RA();
   return xxmalloc(sz);
 }
 
 ATTRIBUTE_EXPORT __attribute__((flatten))
 void* operator new[](std::size_t sz, const std::nothrow_t&) noexcept {
+  ALLOC8_SET_CALLER_RA();
   return xxmalloc(sz);
 }
 
@@ -86,6 +90,7 @@ void operator delete[](void* ptr, std::size_t sz) noexcept {
 
 ATTRIBUTE_EXPORT __attribute__((flatten))
 void* operator new(std::size_t sz, std::align_val_t al) {
+  ALLOC8_SET_CALLER_RA();
   void* ptr = xxmemalign(static_cast<std::size_t>(al), sz);
   if (!ptr) {
     throw std::bad_alloc();
@@ -95,6 +100,7 @@ void* operator new(std::size_t sz, std::align_val_t al) {
 
 ATTRIBUTE_EXPORT __attribute__((flatten))
 void* operator new[](std::size_t sz, std::align_val_t al) {
+  ALLOC8_SET_CALLER_RA();
   void* ptr = xxmemalign(static_cast<std::size_t>(al), sz);
   if (!ptr) {
     throw std::bad_alloc();
@@ -104,11 +110,13 @@ void* operator new[](std::size_t sz, std::align_val_t al) {
 
 ATTRIBUTE_EXPORT __attribute__((flatten))
 void* operator new(std::size_t sz, std::align_val_t al, const std::nothrow_t&) noexcept {
+  ALLOC8_SET_CALLER_RA();
   return xxmemalign(static_cast<std::size_t>(al), sz);
 }
 
 ATTRIBUTE_EXPORT __attribute__((flatten))
 void* operator new[](std::size_t sz, std::align_val_t al, const std::nothrow_t&) noexcept {
+  ALLOC8_SET_CALLER_RA();
   return xxmemalign(static_cast<std::size_t>(al), sz);
 }
 

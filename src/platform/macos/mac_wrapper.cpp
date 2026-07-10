@@ -259,6 +259,7 @@ static inline size_t owned_size(void* ptr) {
 }
 
 void* replace_malloc(size_t sz) {
+  ALLOC8_SET_CALLER_RA();
   ensure_init();
   if (__builtin_expect(g_passthrough, 0)) { bump(g_count_malloc_pass); return g_sys_malloc(sz); }
   bump_and_record(g_count_malloc_user, sz);
@@ -312,17 +313,28 @@ size_t replace_malloc_good_size(size_t sz) {
   return sz ? sz : 1;
 }
 
-void* replace_realloc(void* ptr, size_t sz) {
+// Shared realloc body. Does NOT store the caller-RA hint — the exported
+// entries (replace_realloc, replace_reallocf) store it first, so the hint
+// keeps the application's call site. Malloc fallbacks call xxmalloc directly
+// instead of replace_malloc for the same reason (replace_malloc would
+// overwrite the hint with an address inside this file).
+static inline void* realloc_impl(void* ptr, size_t sz) {
   ensure_init();
   if (g_passthrough) { bump(g_count_realloc_pass); return g_sys_realloc(ptr, sz); }
   bump(g_count_realloc_user);
   alloc8_record_alloc_size(sz);
-  if (!ptr) return replace_malloc(sz);
+  if (!ptr) {
+    void* p = xxmalloc(sz);
+    if (p) mark_owned(p, sz ? sz : 1);
+    return p;
+  }
 
   // 0 size = free (macOS returns a small allocation)
   if (sz == 0) {
     replace_free(ptr);
-    return replace_malloc(1);
+    void* p = xxmalloc(1);
+    if (p) mark_owned(p, 1);
+    return p;
   }
 
   // Ours? Resize in our allocator.
@@ -355,14 +367,21 @@ void* replace_realloc(void* ptr, size_t sz) {
   return newPtr;
 }
 
+void* replace_realloc(void* ptr, size_t sz) {
+  ALLOC8_SET_CALLER_RA();
+  return realloc_impl(ptr, sz);
+}
+
 // macOS-specific reallocf — same as realloc but always free original on failure.
 void* replace_reallocf(void* ptr, size_t sz) {
-  void* p = replace_realloc(ptr, sz);
+  ALLOC8_SET_CALLER_RA();
+  void* p = realloc_impl(ptr, sz);
   if (!p && ptr) replace_free(ptr);
   return p;
 }
 
 void* replace_calloc(size_t count, size_t size) {
+  ALLOC8_SET_CALLER_RA();
   ensure_init();
   if (g_passthrough) { bump(g_count_calloc_pass); return g_sys_calloc(count, size); }
   bump_and_record(g_count_calloc_user, count * size);
@@ -372,6 +391,7 @@ void* replace_calloc(size_t count, size_t size) {
 }
 
 char* replace_strdup(const char* s) {
+  ALLOC8_SET_CALLER_RA();
   if (!s) return nullptr;
   size_t len = strlen(s) + 1;
   char* newStr = (char*)xxmalloc(len);
@@ -383,12 +403,14 @@ char* replace_strdup(const char* s) {
 }
 
 void* replace_memalign(size_t alignment, size_t size) {
+  ALLOC8_SET_CALLER_RA();
   void* p = xxmemalign(alignment, size);
   if (p) track_owned(p, size ? size : 1);
   return p;
 }
 
 void* replace_aligned_alloc(size_t alignment, size_t size) {
+  ALLOC8_SET_CALLER_RA();
   if (alignment == 0 || (size % alignment) != 0) {
     return nullptr;
   }
@@ -398,6 +420,7 @@ void* replace_aligned_alloc(size_t alignment, size_t size) {
 }
 
 int replace_posix_memalign(void** memptr, size_t alignment, size_t size) {
+  ALLOC8_SET_CALLER_RA();
   ensure_init();
   if (g_passthrough) { bump(g_count_memalign_pass); return g_sys_posix_memalign(memptr, alignment, size); }
   bump(g_count_memalign_user);
@@ -418,6 +441,7 @@ int replace_posix_memalign(void** memptr, size_t alignment, size_t size) {
 }
 
 void* replace_valloc(size_t sz) {
+  ALLOC8_SET_CALLER_RA();
   void* p = xxmemalign(ALLOC8_PAGE_SIZE, sz);
   if (p) track_owned(p, sz ? sz : 1);
   return p;

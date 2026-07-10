@@ -198,6 +198,49 @@ extern "C" {
   ALLOC8_EXPORT bool xxowns(const void* ptr);
 }
 
+// ─── CALLER RETURN-ADDRESS HINT ───────────────────────────────────────────────
+//
+// Every app-facing allocation wrapper (malloc/calloc/realloc/memalign/operator
+// new/strdup/...) stores __builtin_return_address(0) — the application's
+// allocation call site — here before dispatching to xx*. Allocators that route
+// by call site (e.g. to co-locate allocations from the same site for locality
+// or compressibility) read this instead of walking the stack: by the time
+// control reaches xxmalloc, the number of intervening frames depends on
+// inlining/LTO/tail-call decisions, so __builtin_return_address(N) from inside
+// the allocator is unreliable.
+//
+// Contract: valid only for the duration of the current allocation call; it is
+// a routing HINT, never dereferenced. Free paths do not set it. The wrapper
+// entries never nest (internal fallbacks call xx* directly), so the outermost
+// application call site always wins. Windows wrappers do not set it yet.
+//
+// initial-exec TLS: interposition libraries load at program startup, so their
+// TLS lives in the static TLS block and access is a direct fs/tpidr offset —
+// no __tls_get_addr / tlv_get_addr call on the malloc hot path.
+#if defined(_WIN32)
+#define ALLOC8_CALLER_RA_TLS_MODEL
+#else
+#define ALLOC8_CALLER_RA_TLS_MODEL __attribute__((tls_model("initial-exec")))
+#endif
+
+#if defined(__cpp_constinit)
+#define ALLOC8_CONSTINIT constinit
+#else
+#define ALLOC8_CONSTINIT
+#endif
+
+// C++17 inline + C++20 constinit: one deduped definition regardless of which
+// wrapper TUs a consumer links (platform wrappers, new_delete, or both), and
+// guaranteed constant initialization — no thread-wrapper indirection on reads.
+extern "C" ALLOC8_CALLER_RA_TLS_MODEL ALLOC8_CONSTINIT inline thread_local
+void* alloc8_caller_ra = nullptr;
+
+// Store the current wrapper's return address as the caller hint. Must be
+// invoked directly in the body of the app-facing entry function (it reads
+// __builtin_return_address(0) of the enclosing frame).
+#define ALLOC8_SET_CALLER_RA() \
+  (alloc8_caller_ra = __builtin_return_address(0))
+
 // ─── USAGE INSTRUCTIONS ───────────────────────────────────────────────────────
 //
 // 1. Define your allocator class with the required methods:

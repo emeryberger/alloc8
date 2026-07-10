@@ -20,6 +20,7 @@ extern "C" {
 // ─── THROWING VARIANTS ────────────────────────────────────────────────────────
 
 ALLOC8_EXPORT void* operator new(std::size_t sz) {
+  ALLOC8_SET_CALLER_RA();
   void* ptr = xxmalloc(sz);
   if (ALLOC8_UNLIKELY(!ptr)) {
     throw std::bad_alloc();
@@ -28,6 +29,7 @@ ALLOC8_EXPORT void* operator new(std::size_t sz) {
 }
 
 ALLOC8_EXPORT void* operator new[](std::size_t sz) {
+  ALLOC8_SET_CALLER_RA();
   void* ptr = xxmalloc(sz);
   if (ALLOC8_UNLIKELY(!ptr)) {
     throw std::bad_alloc();
@@ -38,10 +40,12 @@ ALLOC8_EXPORT void* operator new[](std::size_t sz) {
 // ─── NON-THROWING VARIANTS ────────────────────────────────────────────────────
 
 ALLOC8_EXPORT void* operator new(std::size_t sz, const std::nothrow_t&) noexcept {
+  ALLOC8_SET_CALLER_RA();
   return xxmalloc(sz);
 }
 
 ALLOC8_EXPORT void* operator new[](std::size_t sz, const std::nothrow_t&) noexcept {
+  ALLOC8_SET_CALLER_RA();
   return xxmalloc(sz);
 }
 
@@ -82,6 +86,7 @@ ALLOC8_EXPORT void operator delete[](void* ptr, std::size_t sz) noexcept {
 #if defined(__cpp_aligned_new) && __cpp_aligned_new >= 201606L
 
 ALLOC8_EXPORT void* operator new(std::size_t sz, std::align_val_t al) {
+  ALLOC8_SET_CALLER_RA();
   void* ptr = xxmemalign(static_cast<std::size_t>(al), sz);
   if (ALLOC8_UNLIKELY(!ptr)) {
     throw std::bad_alloc();
@@ -90,6 +95,7 @@ ALLOC8_EXPORT void* operator new(std::size_t sz, std::align_val_t al) {
 }
 
 ALLOC8_EXPORT void* operator new[](std::size_t sz, std::align_val_t al) {
+  ALLOC8_SET_CALLER_RA();
   void* ptr = xxmemalign(static_cast<std::size_t>(al), sz);
   if (ALLOC8_UNLIKELY(!ptr)) {
     throw std::bad_alloc();
@@ -98,10 +104,12 @@ ALLOC8_EXPORT void* operator new[](std::size_t sz, std::align_val_t al) {
 }
 
 ALLOC8_EXPORT void* operator new(std::size_t sz, std::align_val_t al, const std::nothrow_t&) noexcept {
+  ALLOC8_SET_CALLER_RA();
   return xxmemalign(static_cast<std::size_t>(al), sz);
 }
 
 ALLOC8_EXPORT void* operator new[](std::size_t sz, std::align_val_t al, const std::nothrow_t&) noexcept {
+  ALLOC8_SET_CALLER_RA();
   return xxmemalign(static_cast<std::size_t>(al), sz);
 }
 
