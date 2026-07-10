@@ -47,6 +47,31 @@ extern "C" {
 
 static volatile bool g_initComplete = false;
 
+#if defined(ALLOC8_XXOWNS_INLINE_HEADER)
+
+// Compile-time ownership hook (same mechanism as the macOS wrapper):
+// the embedding allocator supplies an inlinable predicate that is safe
+// on any address. This replaces both the SEH probe (which dereferences
+// the masked address and only tolerates faults it happens to catch)
+// and the post-init "everything is ours" fast path, which is wrong
+// whenever foreign pre-detour pointers outlive initialization - e.g.
+// loader threads freeing CRT allocations, observed crashing when the
+// allocator's masked-header probe exceeded the 64KB allocation
+// granularity.
+#include ALLOC8_XXOWNS_INLINE_HEADER
+
+static inline bool IsOurPointer(void* ptr) {
+  if (!ptr) return false;
+  return alloc8_xxowns_inline(ptr);
+}
+
+static size_t SafeGetAllocSize(void* ptr) {
+  if (!IsOurPointer(ptr)) return 0;
+  return xxmalloc_usable_size(ptr);
+}
+
+#else
+
 static size_t SafeGetAllocSize(void* ptr) {
   if (!ptr) return 0;
   __try {
@@ -64,6 +89,8 @@ static inline bool IsOurPointer(void* ptr) {
   }
   return SafeGetAllocSize(ptr) > 0;
 }
+
+#endif // ALLOC8_XXOWNS_INLINE_HEADER
 
 // ─── ORIGINAL FUNCTION POINTERS (TRAMPOLINES) ─────────────────────────────────
 
