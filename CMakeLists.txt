@@ -232,8 +232,21 @@ elseif(ALLOC8_PLATFORM_WINDOWS)
       # Build Detours utilities (withdll.exe, setdll.exe)
       set(DETOURS_SAMPLES_DIR ${detours_SOURCE_DIR}/samples)
 
-      # withdll.exe - run a process with a DLL injected
-      add_executable(withdll ${DETOURS_SAMPLES_DIR}/withdll/withdll.cpp)
+      # withdll.exe - run a process with a DLL injected.
+      #
+      # Built from OUR source (tools/withdll.cpp), not the Detours sample. The
+      # sample launches the target with a zeroed STARTUPINFO, so it never sets
+      # STARTF_USESTDHANDLES and the target does not inherit a REDIRECTED
+      # stdout/stderr -- everything the injected process prints is lost:
+      #
+      #   withdll.exe /d:alloc.dll bench.exe > out.txt
+      #   -> out.txt holds withdll's banner and NOTHING from bench.exe
+      #
+      # That makes it impossible to capture benchmark output on Windows (exit
+      # codes become the only signal, so a CI can crash-test but never
+      # performance-test). Ours passes the standard handles through explicitly.
+      # The command line is unchanged, so callers need no changes.
+      add_executable(withdll ${CMAKE_CURRENT_SOURCE_DIR}/tools/withdll.cpp)
       target_link_libraries(withdll PRIVATE detours_lib)
       target_compile_definitions(withdll PRIVATE WIN32_LEAN_AND_MEAN)
 
