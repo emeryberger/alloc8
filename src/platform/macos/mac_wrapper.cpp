@@ -273,7 +273,12 @@ void* replace_malloc(size_t sz) {
   ALLOC8_SET_CALLER_RA();
   // ONE acquire load gates init, passthrough and stats (see g_fast).
   if (__builtin_expect(g_fast.load(std::memory_order_acquire), 1)) {
-    return xxmalloc(sz);
+    void* p = xxmalloc(sz);
+    // NOT optional: allocators WITHOUT an xxowns() hook (e.g. DieHard) rely on
+    // this internal ptr->size table for is_owned() and malloc_usable_size().
+    // It compiles to nothing when the hook is present (e.g. Hoard).
+    if (p) track_owned(p, sz ? sz : 1);
+    return p;
   }
   return replace_malloc_slow(sz);
 }
@@ -285,6 +290,7 @@ void replace_free(void* ptr) {
   // ONE acquire load gates init, passthrough and stats (see g_fast).
   if (__builtin_expect(g_fast.load(std::memory_order_acquire), 1)) {
     if (__builtin_expect(is_owned(ptr), 1)) {
+      untrack_owned(ptr);   // keeps the no-hook size table correct; no-op with a hook
       xxfree(ptr);
       return;
     }
