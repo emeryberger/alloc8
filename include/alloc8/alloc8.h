@@ -238,8 +238,18 @@ void* alloc8_caller_ra = nullptr;
 // Store the current wrapper's return address as the caller hint. Must be
 // invoked directly in the body of the app-facing entry function (it reads
 // __builtin_return_address(0) of the enclosing frame).
+//
+// Define ALLOC8_NO_CALLER_RA to compile this out. The hint is a thread_local
+// store on EVERY malloc/free -- ~15% of the allocation fast path measured
+// against a fast allocator -- and it is pure overhead for a consumer that
+// never reads alloc8_caller_ra. The symbol still exists either way, so code
+// that reads it keeps linking; it simply stays null.
+#if defined(ALLOC8_NO_CALLER_RA)
+#define ALLOC8_SET_CALLER_RA() ((void)0)
+#else
 #define ALLOC8_SET_CALLER_RA() \
   (alloc8_caller_ra = __builtin_return_address(0))
+#endif
 
 // ─── USAGE INSTRUCTIONS ───────────────────────────────────────────────────────
 //
