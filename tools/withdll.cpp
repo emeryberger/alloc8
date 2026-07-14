@@ -101,7 +101,9 @@ int main(int argc, char ** argv)
 
     // The handles must be inheritable for the child to actually receive them;
     // a handle that came from shell redirection normally already is, but say so.
-    for (HANDLE h : { si.hStdInput, si.hStdOutput, si.hStdError }) {
+    HANDLE stdHandles[3] = { si.hStdInput, si.hStdOutput, si.hStdError };
+    for (int i = 0; i < 3; i++) {
+        HANDLE h = stdHandles[i];
         if (h != NULL && h != INVALID_HANDLE_VALUE) {
             SetHandleInformation(h, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
         }
