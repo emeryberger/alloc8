@@ -323,6 +323,20 @@ constexpr int INIT_DONE     = 2;
 }
 std::atomic<int> g_init_state{INIT_PENDING};
 
+// Single hot-path gate. True only when init is DONE *and* we are not in
+// passthrough *and* stats are off -- i.e. exactly when an interposed call can
+// go straight to the user allocator with no bookkeeping at all.
+//
+// This lets every replace_* entry make ONE acquire load instead of three
+// separate checks (init state, passthrough, stats), each of which was paid on
+// every malloc and free. The release/acquire pair is unchanged: g_fast is
+// published with release AFTER everything above it, so any thread that reads
+// it true has also seen the captured g_sys_* pointers, g_passthrough and the
+// zone table. When it is false the call takes the original slow path, which
+// still does ensure_init() and re-checks passthrough/stats -- so passthrough
+// and ALLOC8_STATS keep working exactly as before, just off the fast path.
+std::atomic<bool> g_fast{false};
+
 // Counters. Bumped from every replace_* entry point so we can prove the user
 // allocator is being exercised (vs. silently passthrough'd to libSystem).
 // Enabled only when ALLOC8_STATS is set in the environment, to avoid the
@@ -419,6 +433,11 @@ static void alloc8_init_once() {
               getprogname() ? getprogname() : "?");
     }
     g_init_state.store(INIT_DONE, std::memory_order_release);
+    // Publish the fast gate LAST, with release: readers that observe it true
+    // are guaranteed to see everything above.
+    g_fast.store(!g_passthrough &&
+                 !g_stats_enabled.load(std::memory_order_relaxed),
+                 std::memory_order_release);
   } else {
     while (g_init_state.load(std::memory_order_acquire) != INIT_DONE) {
       // Spin: another thread is initializing. Allocator interposers may be

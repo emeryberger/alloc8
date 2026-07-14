@@ -110,6 +110,7 @@ extern void* (*g_sys_realloc)(void*, size_t);
 extern int   (*g_sys_posix_memalign)(void**, size_t, size_t);
 extern size_t (*g_sys_malloc_size)(const void*);
 extern std::atomic<int> g_init_state;
+extern std::atomic<bool> g_fast;   // see mac_zones.cpp
 extern std::atomic<bool> g_stats_enabled;
 extern std::atomic<uint64_t> g_count_malloc_user, g_count_malloc_pass;
 extern std::atomic<uint64_t> g_count_calloc_user, g_count_calloc_pass;
@@ -258,8 +259,8 @@ static inline size_t owned_size(void* ptr) {
   return s ? s : 1;
 }
 
-void* replace_malloc(size_t sz) {
-  ALLOC8_SET_CALLER_RA();
+// Slow path: not yet initialized, or passthrough, or stats enabled.
+static ALLOC8_NOINLINE void* replace_malloc_slow(size_t sz) {
   ensure_init();
   if (__builtin_expect(g_passthrough, 0)) { bump(g_count_malloc_pass); return g_sys_malloc(sz); }
   bump_and_record(g_count_malloc_user, sz);
@@ -268,15 +269,28 @@ void* replace_malloc(size_t sz) {
   return p;
 }
 
+void* replace_malloc(size_t sz) {
+  ALLOC8_SET_CALLER_RA();
+  // ONE acquire load gates init, passthrough and stats (see g_fast).
+  if (__builtin_expect(g_fast.load(std::memory_order_acquire), 1)) {
+    return xxmalloc(sz);
+  }
+  return replace_malloc_slow(sz);
+}
+
+static ALLOC8_NOINLINE void replace_free_slow(void* ptr);
+
 void replace_free(void* ptr) {
   if (!ptr) return;
-  ensure_init();
-  if (__builtin_expect(g_passthrough, 0)) { bump(g_count_free_pass); g_sys_free(ptr); return; }
-  bool ours = is_owned(ptr);
-  if (__builtin_expect(ours, 1)) {
-    bump(g_count_free_user);
-    untrack_owned(ptr);
-    xxfree(ptr);
+  // ONE acquire load gates init, passthrough and stats (see g_fast).
+  if (__builtin_expect(g_fast.load(std::memory_order_acquire), 1)) {
+    if (__builtin_expect(is_owned(ptr), 1)) {
+      xxfree(ptr);
+      return;
+    }
+    // Foreign pointer: fall through to the libSystem zone routing below.
+  } else {
+    replace_free_slow(ptr);
     return;
   }
   // Not in our table — the user allocator never returned this pointer. Hand
@@ -293,6 +307,24 @@ void replace_free(void* ptr) {
   // Pointer belongs to no zone we recognize (shared cache, mmap'd by the
   // user without going through us, …). Drop silently — calling libSystem
   // free would abort with "POINTER BEING FREED WAS NOT ALLOCATED".
+  bump(g_count_free_dropped);
+}
+
+// Slow path for free: not yet initialized, or passthrough, or stats enabled.
+static ALLOC8_NOINLINE void replace_free_slow(void* ptr) {
+  ensure_init();
+  if (__builtin_expect(g_passthrough, 0)) { bump(g_count_free_pass); g_sys_free(ptr); return; }
+  if (__builtin_expect(is_owned(ptr), 1)) {
+    bump(g_count_free_user);
+    untrack_owned(ptr);
+    xxfree(ptr);
+    return;
+  }
+  if (malloc_zone_t* z = libsystem_zone_for(ptr)) {
+    bump(g_count_free_libsys);
+    z->free(z, ptr);
+    return;
+  }
   bump(g_count_free_dropped);
 }
 
