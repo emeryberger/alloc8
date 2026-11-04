@@ -53,5 +53,21 @@ if(TARGET simple_heap)
     set_tests_properties(test_malloc_api_interposed PROPERTIES
       DEPENDS simple_heap
     )
+
+    # macOS default-zone takeover: zone-API allocations (SQLite, CoreFoundation)
+    # must reach the user allocator, mixed zone/plain frees must stay
+    # consistent, and fork must work with our zone registered. Run with the
+    # takeover on (and asserted) and off.
+    if(APPLE)
+      add_executable(test_zone_api test_zone_api.c)
+      target_link_libraries(test_zone_api PRIVATE "-framework CoreFoundation")
+      add_test(NAME test_zone_api_interposed
+               COMMAND ${CMAKE_COMMAND} -E env ${PRELOAD_ENV} ALLOC8_EXPECT_ZONE=1
+                       $<TARGET_FILE:test_zone_api>)
+      add_test(NAME test_zone_api_interposed_no_takeover
+               COMMAND ${CMAKE_COMMAND} -E env ${PRELOAD_ENV} ALLOC8_ZONE=0
+                       $<TARGET_FILE:test_zone_api>)
+      add_test(NAME test_zone_api_native COMMAND test_zone_api)
+    endif()
   endif()
 endif()
