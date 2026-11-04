@@ -69,7 +69,7 @@ Status and plans for the alloc8 allocator interposition library.
   - Investigate why alloc8 Hoard shows different perf characteristics than standalone
   - Eliminate redundant `isCustomHeapInitialized()` + `getCustomHeap()` pattern if present
   - Target: single TLS lookup per allocation (match standalone Hoard pattern)
-  - Files: `examples/hoard/hoard_alloc8.cpp`, `hoard_thread_hooks_win.cpp`
+  - Files: Hoard's `src/source/libhoard.cpp`, `src/source/wintls.cpp` (the example builds Hoard's own sources)
 
 - [ ] **Add allocator verification infrastructure**
   - Statistics tracking (alloc count, free count, bytes allocated)
