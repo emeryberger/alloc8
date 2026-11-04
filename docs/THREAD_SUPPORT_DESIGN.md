@@ -207,7 +207,7 @@ compared to thread creation overhead.
 With this design, Hoard's integration becomes:
 
 ```cpp
-// hoard_alloc8.cpp
+// Hoard: src/source/libhoard.cpp
 
 // Existing xxmalloc/xxfree interface...
 

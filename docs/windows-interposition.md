@@ -246,8 +246,7 @@ endif()
 - `src/platform/windows/alloc8_redirect.cpp` - Redirect DLL implementation
 - `src/platform/windows/win_wrapper_detours.cpp` - Detours-based interposition
 - `src/platform/windows/win_wrapper_iat.cpp` - IAT hooking (experimental)
-- `examples/hoard/hoard_redirect_win.cpp` - Hoard using redirect mechanism
-- `examples/hoard/hoard_thread_hooks_win.cpp` - Hoard using Detours mechanism
+- `examples/hoard/` - Hoard built from its own sources (`libhoard.cpp`, `wintls.cpp`) using the Detours mechanism
 - `examples/diehard/diehard_redirect_win.cpp` - DieHard using redirect mechanism
 - `tests/redirect_test_dll.cpp` - Test allocator using redirect
 - `tests/detours_test_dll.cpp` - Test allocator using Detours

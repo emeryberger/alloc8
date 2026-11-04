@@ -410,8 +410,8 @@ alloc8/
 ├── examples/
 │   ├── simple_heap/         # Basic example with statistics
 │   ├── diehard/             # DieHard integration (Linux, macOS, Windows)
-│   └── hoard/               # Hoard integration (Linux, Windows)
-│       └── hoard_thread_hooks_win.cpp   # Windows-specific TLS management
+│   └── hoard/               # Hoard integration: builds Hoard's own sources
+│                            #   (libhoard.cpp + platform TLS file) on alloc8
 └── tests/
 ```
 

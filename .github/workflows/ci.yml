@@ -177,6 +177,31 @@ jobs:
       - name: Test DieHard interposition - malloc API (DYLD_INSERT_LIBRARIES)
         run: DYLD_INSERT_LIBRARIES=build/examples/diehard/libdiehard_alloc8.dylib ./build/tests/test_malloc_api
 
+  # Hoard on macOS: no job covered it, so the example silently stopped linking
+  # (missing Hoard::ownershipdetail::bits) once Hoard grew its ownership map.
+  build-macos-hoard:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (Hoard)
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DALLOC8_BUILD_TESTS=ON -DALLOC8_BUILD_EXAMPLES=ON -DALLOC8_BUILD_HOARD_EXAMPLE=ON
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Test Hoard interposition - basic (DYLD_INSERT_LIBRARIES)
+        run: DYLD_INSERT_LIBRARIES=build/examples/hoard/libhoard_alloc8.dylib ./build/tests/test_basic_alloc
+
+      - name: Test Hoard interposition - malloc API (DYLD_INSERT_LIBRARIES)
+        run: DYLD_INSERT_LIBRARIES=build/examples/hoard/libhoard_alloc8.dylib ./build/tests/test_malloc_api
+
+      - name: Test Hoard threadtest (DYLD_INSERT_LIBRARIES)
+        run: DYLD_INSERT_LIBRARIES=build/examples/hoard/libhoard_alloc8.dylib ./build/tests/threadtest 4 100 1000
+
   build-windows:
     runs-on: windows-latest
     steps:
