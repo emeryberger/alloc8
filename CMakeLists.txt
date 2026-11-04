@@ -312,15 +312,17 @@ if(ALLOC8_PREFIX)
   add_library(alloc8::prefixed ALIAS alloc8_prefixed_${ALLOC8_PREFIX})
 endif()
 
+# ─── EXAMPLES ──────────────────────────────────────────────────────────────────
+# Before tests/: the interposed tests are registered only `if(TARGET simple_heap)`,
+# which is false if examples/ has not been processed yet.
+if(ALLOC8_BUILD_EXAMPLES)
+  add_subdirectory(examples)
+endif()
+
 # ─── TESTS ─────────────────────────────────────────────────────────────────────
 if(ALLOC8_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
-endif()
-
-# ─── EXAMPLES ──────────────────────────────────────────────────────────────────
-if(ALLOC8_BUILD_EXAMPLES)
-  add_subdirectory(examples)
 endif()
 
 # ─── INSTALL ───────────────────────────────────────────────────────────────────

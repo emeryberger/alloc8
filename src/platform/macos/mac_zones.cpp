@@ -223,7 +223,80 @@ static inline malloc_zone_t* libsystem_zone_for(const void* ptr) {
     if (!fn) fn = kZoneFromPtrUnavailable;
   }
   if (fn == kZoneFromPtrUnavailable) return nullptr;
-  return fn(ptr);
+  malloc_zone_t* z = fn(ptr);
+  // Once our zone is registered (see alloc8_promote_zone), libSystem's walk
+  // can find it; callers of this helper want a *libSystem* zone only.
+  return z == getDefaultZone() ? nullptr : z;
+}
+
+// True once alloc8's zone has been registered with libmalloc and promoted to
+// be the default zone (malloc_zones[0]). See alloc8_promote_zone().
+static std::atomic<bool> g_zone_promoted{false};
+
+// libSystem's default zone as it was before promotion. Requests that the user
+// allocator itself makes for "system" memory are served from here.
+static malloc_zone_t* g_sys_zone = nullptr;
+
+// [lo, hi) of the __TEXT of our own image (alloc8 + the user allocator, which
+// are always linked into one dylib) and of libsystem_malloc.
+static uintptr_t g_self_lo = 0, g_self_hi = 0;
+static uintptr_t g_libmalloc_lo = 0, g_libmalloc_hi = 0;
+// libdyld: allocates thread-local variable storage (_tlv_get_addr ->
+// instantiateVariable -> malloc) the first time a thread touches a TLV. The
+// user allocator (and alloc8's caller-RA hint) use TLVs, so serving those
+// allocations from the user allocator recurses on every new thread.
+static uintptr_t g_libdyld_lo = 0, g_libdyld_hi = 0;
+// Exported by libdyld (any symbol in it would do; used only to find its range).
+extern "C" void _tlv_atexit(void (*)(void*), void*);
+
+static void text_range_of(const void* addr, uintptr_t& lo, uintptr_t& hi) {
+  Dl_info info;
+  if (!dladdr(addr, &info) || !info.dli_fbase) return;
+  auto* hdr = static_cast<const struct mach_header_64*>(info.dli_fbase);
+  unsigned long size = 0;
+  uint8_t* text = getsegmentdata(hdr, "__TEXT", &size);
+  if (!text || !size) return;
+  lo = reinterpret_cast<uintptr_t>(text);
+  hi = lo + size;
+}
+
+static inline uintptr_t strip_pac(uintptr_t ra) {
+  return ra & 0x0000007FFFFFFFFFull;  // drop PAC / TBI bits (47-bit user VA)
+}
+
+// Called from our zone callbacks, which are only reached through libmalloc's
+// dispatch. Returns true when the request must be served by the original
+// system zone: it comes from our own image (see below) or from libdyld's TLV
+// setup.
+//
+// dispatch (malloc(), malloc_zone_malloc(), ...). Walk up past libmalloc's own
+// frames to the first caller outside it. If that caller is our own image, the
+// user allocator (or alloc8's passthrough) is asking libSystem for memory —
+// e.g. SimpleHeap's real_malloc or smash's g_system_alloc — and must get the
+// original system zone, not itself (infinite recursion). Every other caller
+// (libSystem internals, SQLite, CoreFoundation, ...) gets the user allocator.
+// macOS always keeps frame pointers, so the walk is a few loads.
+__attribute__((noinline))
+static bool zone_call_from_self() {
+  if (!g_self_lo) return false;
+  auto** fp = static_cast<void**>(__builtin_frame_address(0));
+  // fp[0] = caller's frame record, fp[1] = return address. Skip our own
+  // frames (this helper + the zone callback), then libmalloc's.
+  for (int depth = 0; fp && depth < 12; ++depth) {
+    uintptr_t ra = strip_pac(reinterpret_cast<uintptr_t>(fp[1]));
+    bool in_self = ra >= g_self_lo && ra < g_self_hi;
+    bool in_libmalloc = ra >= g_libmalloc_lo && ra < g_libmalloc_hi;
+    if (depth >= 1 && !in_self && !in_libmalloc)
+      return ra >= g_libdyld_lo && ra < g_libdyld_hi;
+    if (depth >= 2 && in_self) {
+      // Our image again, above at least one libmalloc frame: a self call.
+      return true;
+    }
+    auto** next = static_cast<void**>(fp[0]);
+    if (next <= fp) break;  // frame chain must grow upward
+    fp = next;
+  }
+  return false;
 }
 
 // Resolve libSystem's default malloc zone, bypassing our own interposers.
@@ -466,8 +539,76 @@ static void alloc8_strip_dyld_for_children() {
   unsetenv("DYLD_INSERT_LIBRARIES");
 }
 
+// ─── DEFAULT-ZONE TAKEOVER ────────────────────────────────────────────────────
+//
+// Symbol interposition catches malloc/free/... calls that cross an image
+// boundary, but not code that allocates through the zone API: SQLite's
+// amalgamation on macOS calls malloc_zone_malloc(malloc_default_zone(), n),
+// CoreFoundation and libobjc allocate through zones, and libSystem's own
+// internal malloc() calls never reach our interposers at all.
+//
+// So, like mimalloc, jemalloc and Firefox's mozjemalloc, we register a real
+// zone with libmalloc and promote it to malloc_zones[0]. malloc_default_zone()
+// returns libmalloc's virtual default zone, which forwards to zones[0], so all
+// default-zone traffic now reaches the user allocator, and libmalloc's own
+// pointer->zone lookups (free, malloc_size, malloc_zone_from_ptr) find our
+// zone for our pointers via its size() callback. Pointers allocated before
+// promotion stay with libSystem's zones, which remain registered.
+//
+// Earlier alloc8 versions interposed malloc_default_zone() to return an
+// *unregistered* zone; libmalloc did not know about it and libsandbox aborted.
+// Registration is the difference.
+//
+// Opt out with ALLOC8_ZONE=0. Skipped in passthrough mode.
+static void alloc8_promote_zone() {
+  if (g_passthrough) return;
+  if (const char* env = getenv("ALLOC8_ZONE"))
+    if (env[0] == '0') return;
+  malloc_zone_t* ours = getDefaultZone();
+  vm_address_t* zones = nullptr;
+  unsigned count = 0;
+  if (malloc_get_all_zones(mach_task_self(), nullptr, &zones, &count) != KERN_SUCCESS ||
+      count == 0)
+    return;
+  malloc_zone_t* dflt = reinterpret_cast<malloc_zone_t*>(zones[0]);
+  g_sys_zone = dflt;
+  text_range_of(reinterpret_cast<const void*>(&alloc8_promote_zone), g_self_lo, g_self_hi);
+  text_range_of(reinterpret_cast<const void*>(&malloc_zone_register), g_libmalloc_lo, g_libmalloc_hi);
+  text_range_of(reinterpret_cast<const void*>(&_tlv_atexit), g_libdyld_lo, g_libdyld_hi);
+  if (!g_self_lo || !g_libmalloc_lo || !g_libdyld_lo) return;  // cannot classify callers: stay off
+  // Creating the purgeable zone lazily later could otherwise put it first.
+  malloc_zone_t* purgeable = malloc_default_purgeable_zone();
+  malloc_zone_register(ours);
+  // Unregistering and re-registering the current default moves it to the end
+  // of the list; repeat until ours is first (the same dance as jemalloc's
+  // zone_promote). Bounded so a hostile layout cannot loop forever.
+  for (int tries = 0; tries < 16; ++tries) {
+    malloc_zone_unregister(dflt);
+    malloc_zone_register(dflt);
+    if (purgeable && purgeable != dflt) {
+      malloc_zone_unregister(purgeable);
+      malloc_zone_register(purgeable);
+    }
+    if (malloc_get_all_zones(mach_task_self(), nullptr, &zones, &count) != KERN_SUCCESS ||
+        count == 0)
+      break;
+    dflt = reinterpret_cast<malloc_zone_t*>(zones[0]);
+    if (dflt == ours) {
+      g_zone_promoted.store(true, std::memory_order_release);
+      break;
+    }
+  }
+  if (getenv("ALLOC8_DEBUG")) {
+    fprintf(stderr, "[alloc8] default-zone takeover: %s (zones=%u)\n",
+            g_zone_promoted.load() ? "promoted" : "FAILED", count);
+  }
+}
+
 __attribute__((constructor(101)))
-static void alloc8_early_zone_init() { alloc8_init_once(); }
+static void alloc8_early_zone_init() {
+  alloc8_init_once();
+  alloc8_promote_zone();
+}
 
 // Bump the histogram bucket for a size argument. Called on every malloc /
 // calloc / realloc / posix_memalign that lands in the user allocator (we
@@ -582,9 +723,20 @@ size_t replace_internal_malloc_zone_size(malloc_zone_t*, const void* ptr) {
   // it). If libSystem owns it, return 0 so libSystem (not we) gets to satisfy
   // the query. If the bitmap doesn't recognize it, also return 0 — calling
   // xxmalloc_usable_size() on a non-issued pointer is undefined behavior.
+  //
+  // Do NOT consult libsystem_zone_for() here: once our zone is registered,
+  // libSystem's malloc_zone_from_ptr walks the zone list (ours first) and
+  // calls this very callback, so asking it would recurse. is_owned() is
+  // precise on its own (the allocator's xxowns hook, or alloc8's size table).
   if (!ptr) return 0;
-  if (libsystem_zone_for(ptr)) return 0;
   if (!is_owned(ptr)) return 0;
+  // A size query from our own image is the user allocator asking libSystem
+  // about its backing memory (e.g. SimpleHeap wraps system malloc and calls
+  // the real malloc_size). Answer 0 so libmalloc asks the next zone, which
+  // really owns it; answering via xxmalloc_usable_size would recurse.
+  // Only reached for owned pointers via libmalloc, never on the interposed
+  // malloc_size path.
+  if (g_zone_promoted.load(std::memory_order_relaxed) && zone_call_from_self()) return 0;
   size_t s = xxmalloc_usable_size((void*)ptr);
   if (s) return s;
   if (have_owns_hook()) return 1;  // owned but unsized; table is unused.
@@ -632,47 +784,69 @@ int replace_malloc_jumpstart(int) {
 
 // ─── ZONE ALLOCATION FUNCTIONS ────────────────────────────────────────────────
 
+// Our zone's allocation callbacks. When the request comes from our own image
+// (the user allocator asking libSystem for backing memory), serve it from the
+// original system zone; see zone_call_from_self().
 void* replace_malloc_zone_malloc(malloc_zone_t*, size_t size) {
+  if (g_sys_zone && zone_call_from_self()) return g_sys_zone->malloc(g_sys_zone, size);
   return replace_malloc(size);
 }
 
 void* replace_malloc_zone_calloc(malloc_zone_t*, size_t count, size_t size) {
+  if (g_sys_zone && zone_call_from_self()) return g_sys_zone->calloc(g_sys_zone, count, size);
   return replace_calloc(count, size);
 }
 
 void* replace_malloc_zone_realloc(malloc_zone_t*, void* ptr, size_t size) {
+  // libmalloc only dispatches realloc to the zone that owns ptr (or to us for
+  // NULL); a system pointer never arrives here, so only NULL needs the check.
+  if (!ptr && g_sys_zone && zone_call_from_self()) return g_sys_zone->malloc(g_sys_zone, size);
   return replace_realloc(ptr, size);
 }
 
 void* replace_malloc_zone_valloc(malloc_zone_t*, size_t size) {
+  if (g_sys_zone && zone_call_from_self()) return g_sys_zone->valloc(g_sys_zone, size);
   return replace_valloc(size);
 }
 
 void* replace_malloc_zone_memalign(malloc_zone_t*, size_t alignment, size_t size) {
+  if (g_sys_zone && zone_call_from_self()) return g_sys_zone->memalign(g_sys_zone, alignment, size);
   return replace_memalign(alignment, size);
 }
 
-void replace_malloc_zone_free(malloc_zone_t*, void* ptr) {
+// Free a pointer that arrived through our zone. Once we are the default zone,
+// libmalloc hands us frees for pointers it allocated before promotion (or
+// through private zones), so check ownership first and route anything else to
+// the libSystem zone that owns it. Unknown pointers are dropped, as in
+// replace_free (libSystem would abort on them).
+static void zone_free_ptr(void* ptr) {
   if (!ptr) return;
-  if (malloc_zone_t* z = libsystem_zone_for(ptr)) {
-    z->free(z, ptr);
+  if (is_owned(ptr)) {
+    untrack_owned(ptr);
+    xxfree(ptr);
     return;
   }
-  xxfree(ptr);
+  if (malloc_zone_t* z = libsystem_zone_for(ptr)) z->free(z, ptr);
+}
+
+void replace_malloc_zone_free(malloc_zone_t*, void* ptr) {
+  zone_free_ptr(ptr);
 }
 
 void replace_malloc_zone_free_definite_size(malloc_zone_t*, void* ptr, size_t sz) {
   if (!ptr) return;
+  if (is_owned(ptr)) {
+    // Ours: pass the size hint through so allocators that implement free_sized
+    // can use the O(1) path; xxfree_sized falls back to xxfree internally.
+    untrack_owned(ptr);
+    xxfree_sized(ptr, sz);
+    return;
+  }
   // Foreign pointers go straight to their libSystem zone — we never owned them.
   if (malloc_zone_t* z = libsystem_zone_for(ptr)) {
     if (z->free_definite_size) z->free_definite_size(z, ptr, sz);
     else z->free(z, ptr);
-    return;
   }
-  // Ours: pass the size hint through so allocators that implement free_sized
-  // can use the O(1) path; xxfree_sized falls back to xxfree internally.
-  untrack_owned(ptr);
-  xxfree_sized(ptr, sz);
 }
 
 // ─── ZONE BATCH OPERATIONS ────────────────────────────────────────────────────
@@ -682,6 +856,8 @@ unsigned replace_malloc_zone_batch_malloc(
     size_t size,
     void** results,
     unsigned num_requested) {
+  if (g_sys_zone && zone_call_from_self() && g_sys_zone->batch_malloc)
+    return g_sys_zone->batch_malloc(g_sys_zone, size, results, num_requested);
   for (unsigned i = 0; i < num_requested; i++) {
     results[i] = replace_malloc(size);
     if (!results[i]) {
@@ -696,7 +872,7 @@ void replace_malloc_zone_batch_free(
     void** to_be_freed,
     unsigned num) {
   for (unsigned i = 0; i < num; i++) {
-    xxfree(to_be_freed[i]);
+    zone_free_ptr(to_be_freed[i]);
   }
 }
 
@@ -712,7 +888,13 @@ bool replace_malloc_zone_check(malloc_zone_t*) {
 // libsandbox depend on the returned zone being a *real* libSystem zone, not
 // our fiction — claiming our default zone for owned pointers caused
 // libsystem free to abort during plugin-container sandbox compilation.
+//
+// Once our zone is registered and promoted (alloc8_promote_zone), libmalloc
+// itself attributes our pointers to our zone, so answering with it keeps
+// every caller consistent with libmalloc's own free()/malloc_size() routing.
 malloc_zone_t* replace_malloc_zone_from_ptr(const void* ptr) {
+  if (ptr && g_zone_promoted.load(std::memory_order_acquire) && is_owned(ptr))
+    return getDefaultZone();
   return libsystem_zone_for(ptr);
 }
 
@@ -740,6 +922,43 @@ void replace_malloc_zone_unregister(malloc_zone_t*) {
 
 // ─── ZONE INITIALIZATION ──────────────────────────────────────────────────────
 
+// libmalloc calls force_lock/force_unlock/reinit_lock on every registered zone
+// around fork(), and enumerator/statistics from leaks/heap/vmmap, so a
+// registered zone must have a complete introspection table.
+static kern_return_t zone_enumerator(task_t, void*, unsigned, vm_address_t,
+                                     memory_reader_t, vm_range_recorder_t) {
+  return KERN_SUCCESS;
+}
+static size_t zone_good_size(malloc_zone_t*, size_t size) { return size; }
+static boolean_t zone_check(malloc_zone_t*) { return true; }
+static void zone_print(malloc_zone_t*, boolean_t) {}
+static void zone_log(malloc_zone_t*, void*) {}
+static void zone_force_lock(malloc_zone_t*) {}
+static void zone_force_unlock(malloc_zone_t*) {}
+static void zone_reinit_lock(malloc_zone_t*) {}
+static void zone_statistics(malloc_zone_t*, malloc_statistics_t* stats) {
+  if (stats) *stats = malloc_statistics_t{};
+}
+static boolean_t zone_locked(malloc_zone_t*) { return false; }
+
+static malloc_introspection_t* zoneIntrospection() {
+  static malloc_introspection_t intro = [] {
+    malloc_introspection_t i{};
+    i.enumerator = zone_enumerator;
+    i.good_size = zone_good_size;
+    i.check = zone_check;
+    i.print = zone_print;
+    i.log = zone_log;
+    i.force_lock = zone_force_lock;
+    i.force_unlock = zone_force_unlock;
+    i.statistics = zone_statistics;
+    i.zone_locked = zone_locked;
+    i.reinit_lock = zone_reinit_lock;
+    return i;
+  }();
+  return &intro;
+}
+
 static bool initializeZone(malloc_zone_t& zone) {
   zone.size = replace_internal_malloc_zone_size;
   zone.malloc = replace_malloc_zone_malloc;
@@ -751,8 +970,10 @@ static bool initializeZone(malloc_zone_t& zone) {
   zone.zone_name = theOneTrueZoneName;
   zone.batch_malloc = replace_malloc_zone_batch_malloc;
   zone.batch_free = replace_malloc_zone_batch_free;
-  zone.introspect = nullptr;
-  zone.version = 8;
+  zone.introspect = zoneIntrospection();
+  // Version 9: introspection includes reinit_lock (called in the fork child).
+  // We do not provide claimed_address (v10) or later callbacks.
+  zone.version = 9;
   zone.memalign = replace_malloc_zone_memalign;
 
 #if MAC_OS_X_VERSION_MAX_ALLOWED >= 1060
