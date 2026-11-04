@@ -40,7 +40,7 @@ endif()
 # If examples are built, add tests with interposition
 if(TARGET simple_heap)
   if(APPLE)
-    set(PRELOAD_ENV "DYLD_INSERT_LIBRARIES=$<TARGET_FILE:simple_heap>;DYLD_FORCE_FLAT_NAMESPACE=1")
+    set(PRELOAD_ENV "DYLD_INSERT_LIBRARIES=$<TARGET_FILE:simple_heap>")
   elseif(UNIX)
     set(PRELOAD_ENV "LD_PRELOAD=$<TARGET_FILE:simple_heap>")
   endif()
