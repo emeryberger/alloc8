@@ -74,6 +74,14 @@ if(TARGET simple_heap)
                COMMAND ${CMAKE_COMMAND} -E env ${PRELOAD_ENV} ALLOC8_ZONE=0
                        $<TARGET_FILE:test_zone_api>)
       add_test(NAME test_zone_api_native COMMAND test_zone_api)
+
+      # fork() must also lock libSystem's own zones: alloc8's
+      # _malloc_fork_* replacements chain to libmalloc's originals.
+      add_executable(test_fork_system_zone test_fork_system_zone.c)
+      add_test(NAME test_fork_system_zone_interposed
+               COMMAND ${CMAKE_COMMAND} -E env ${PRELOAD_ENV}
+                       $<TARGET_FILE:test_fork_system_zone>)
+      add_test(NAME test_fork_system_zone_native COMMAND test_fork_system_zone)
     endif()
   endif()
 endif()

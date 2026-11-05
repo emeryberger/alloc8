@@ -489,15 +489,34 @@ void replace_vfree(void* ptr) { replace_free(ptr); }
 
 // ─── FORK HANDLERS ────────────────────────────────────────────────────────────
 
+// libSystem's fork() calls libmalloc's _malloc_fork_prepare/parent/child at
+// the malloc layer's point in the atfork sequence (in the child, before
+// pthread_atfork child handlers; libSystem's own child handlers allocate).
+// We lock the user allocator there, and must also chain to libmalloc's
+// originals: they lock
+// (and in the child, reinitialize) every registered zone, including the
+// system zones that still serve pre-takeover pointers and the allocator's
+// own internal calls. Replacing them outright left those zones unlocked
+// across fork(), so a thread inside one at fork time hung the child.
+//
+// Calls from this image are not interposed by dyld, so the names below
+// reach libmalloc. Our own zone's force_lock/force_unlock/reinit_lock are
+// no-ops, so the chained calls never re-enter xxmalloc_lock().
+//
+// Order: the user allocator's lock is outermost (it may call into a system
+// zone while holding it), so take it first and release it last.
 void replace__malloc_fork_prepare() {
   xxmalloc_lock();
+  _malloc_fork_prepare();
 }
 
 void replace__malloc_fork_parent() {
+  _malloc_fork_parent();
   xxmalloc_unlock();
 }
 
 void replace__malloc_fork_child() {
+  _malloc_fork_child();
   xxmalloc_unlock();
 }
 
