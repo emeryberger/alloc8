@@ -29,12 +29,18 @@ if(NOT MSVC)
   target_compile_features(test_caller_ra PRIVATE cxx_std_20)
   target_link_libraries(test_caller_ra PRIVATE alloc8_headers)
   add_test(NAME test_caller_ra COMMAND test_caller_ra)
+
+  # Same, with ALLOC8_CALLER_RA_HOOK: the hint goes to the hook, not the TLS.
+  add_executable(test_caller_ra_hook test_caller_ra_hook.cpp)
+  target_compile_features(test_caller_ra_hook PRIVATE cxx_std_20)
+  target_link_libraries(test_caller_ra_hook PRIVATE alloc8_headers)
+  add_test(NAME test_caller_ra_hook COMMAND test_caller_ra_hook)
 endif()
 
 # If examples are built, add tests with interposition
 if(TARGET simple_heap)
   if(APPLE)
-    set(PRELOAD_ENV "DYLD_INSERT_LIBRARIES=$<TARGET_FILE:simple_heap>;DYLD_FORCE_FLAT_NAMESPACE=1")
+    set(PRELOAD_ENV "DYLD_INSERT_LIBRARIES=$<TARGET_FILE:simple_heap>")
   elseif(UNIX)
     set(PRELOAD_ENV "LD_PRELOAD=$<TARGET_FILE:simple_heap>")
   endif()

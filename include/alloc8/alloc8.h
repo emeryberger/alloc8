@@ -244,8 +244,22 @@ void* alloc8_caller_ra = nullptr;
 // against a fast allocator -- and it is pure overhead for a consumer that
 // never reads alloc8_caller_ra. The symbol still exists either way, so code
 // that reads it keeps linking; it simply stays null.
+//
+// Feature test: this alloc8 honors ALLOC8_CALLER_RA_HOOK (below). An allocator
+// that stores the hint itself can #error on older alloc8 instead of silently
+// reading a hint that is never written.
+#define ALLOC8_HAS_CALLER_RA_HOOK 1
+//
+// Define ALLOC8_CALLER_RA_HOOK(ra) to store the hint somewhere else instead
+// (it receives the return address as a void*). On macOS every access to a
+// thread_local from a dylib goes through _tlv_get_addr, even with
+// tls_model("initial-exec"); an allocator that keeps its per-thread state in
+// a reserved TSD slot (as mimalloc does) can store the hint there and avoid
+// that call on every malloc/free. alloc8_caller_ra then stays null.
 #if defined(ALLOC8_NO_CALLER_RA)
 #define ALLOC8_SET_CALLER_RA() ((void)0)
+#elif defined(ALLOC8_CALLER_RA_HOOK)
+#define ALLOC8_SET_CALLER_RA() ALLOC8_CALLER_RA_HOOK(__builtin_return_address(0))
 #else
 #define ALLOC8_SET_CALLER_RA() \
   (alloc8_caller_ra = __builtin_return_address(0))
