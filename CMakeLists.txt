@@ -154,7 +154,7 @@ if(ALLOC8_PLATFORM_LINUX)
   )
   target_link_options(alloc8_interpose INTERFACE
     "LINKER:--version-script=${ALLOC8_VERSION_SCRIPT}"
-    "-Bsymbolic"
+    "LINKER:-Bsymbolic"
   )
 
 elseif(ALLOC8_PLATFORM_MACOS)
