@@ -715,6 +715,30 @@ extern "C" void alloc8_dump_stats(int /*sig*/) {
 
 // ─── ZONE FUNCTION IMPLEMENTATIONS ────────────────────────────────────────────
 
+// Size of a pointer our zone does not own, as seen by a DIRECT caller of our
+// size callback. libmalloc's virtual default zone (what malloc_default_zone()
+// returns) forwards size/realloc/free straight to malloc_zones[0] — us, once
+// promoted — without an ownership lookup, and its size forwarder is a tail
+// call, so the return address is the application's. SQLite's mem1.c is the
+// canonical such caller: it allocates with malloc_zone_malloc(default_zone)
+// and sizes blocks with default_zone->size(). Pointers our zone hands out but
+// does not own (an allocator that passes some requests through to the system
+// zone, e.g. smash's large-only mode) would otherwise size as 0, and SQLite's
+// growOpArray() then spins forever (nOpAlloc = 0 / sizeof(Op)).
+//
+// libmalloc's own ownership walk (malloc_zone_from_ptr, free, malloc_size,
+// realloc: find_registered_zone) calls us from inside libmalloc and must keep
+// getting 0 for foreign pointers, or every system pointer would be attributed
+// to our zone — and asking libsystem_zone_for() from there would recurse.
+static size_t foreign_size_for_direct_caller(const void* ptr, void* ra_raw) {
+  uintptr_t ra = strip_pac(reinterpret_cast<uintptr_t>(ra_raw));
+  if (!g_libmalloc_lo || (ra >= g_libmalloc_lo && ra < g_libmalloc_hi)) return 0;
+  // From here libmalloc's walk asks our callback again, but from inside
+  // libmalloc, so it gets 0 and moves on to the zone that really owns ptr.
+  malloc_zone_t* z = libsystem_zone_for(ptr);
+  return z ? z->size(z, ptr) : 0;
+}
+
 extern "C" {
 
 size_t replace_internal_malloc_zone_size(malloc_zone_t*, const void* ptr) {
@@ -729,7 +753,7 @@ size_t replace_internal_malloc_zone_size(malloc_zone_t*, const void* ptr) {
   // calls this very callback, so asking it would recurse. is_owned() is
   // precise on its own (the allocator's xxowns hook, or alloc8's size table).
   if (!ptr) return 0;
-  if (!is_owned(ptr)) return 0;
+  if (!is_owned(ptr)) return foreign_size_for_direct_caller(ptr, __builtin_return_address(0));
   // A size query from our own image is the user allocator asking libSystem
   // about its backing memory (e.g. SimpleHeap wraps system malloc and calls
   // the real malloc_size). Answer 0 so libmalloc asks the next zone, which
@@ -798,8 +822,10 @@ void* replace_malloc_zone_calloc(malloc_zone_t*, size_t count, size_t size) {
 }
 
 void* replace_malloc_zone_realloc(malloc_zone_t*, void* ptr, size_t size) {
-  // libmalloc only dispatches realloc to the zone that owns ptr (or to us for
-  // NULL); a system pointer never arrives here, so only NULL needs the check.
+  // realloc() dispatches only to the zone that owns ptr (or to us for NULL),
+  // but malloc_zone_realloc(malloc_default_zone(), p, n) forwards ANY p to us
+  // (SQLite does this). replace_realloc routes foreign pointers itself, so
+  // only the NULL-from-self case needs the system zone here.
   if (!ptr && g_sys_zone && zone_call_from_self()) return g_sys_zone->malloc(g_sys_zone, size);
   return replace_realloc(ptr, size);
 }
