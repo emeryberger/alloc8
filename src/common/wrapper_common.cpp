@@ -143,7 +143,14 @@ ALLOC8_EXPORT void* alloc8_common_valloc(size_t sz) {
  */
 ALLOC8_EXPORT void* alloc8_common_pvalloc(size_t sz) {
   size_t pageSize = alloc8::internal::getPageSize();
-  size_t rounded = (sz + pageSize - 1) & ~(pageSize - 1);
+  // Round up to a page multiple, guarding the round-up: for sz within a page
+  // of SIZE_MAX it wraps to 0, and the caller would get back one page while
+  // believing it owns ~SIZE_MAX bytes. pvalloc(0) yields one page (glibc).
+  if (ALLOC8_UNLIKELY(sz > SIZE_MAX - (pageSize - 1))) {
+    errno = ENOMEM;
+    return nullptr;
+  }
+  size_t rounded = (sz == 0) ? pageSize : (sz + pageSize - 1) & ~(pageSize - 1);
   return xxmemalign(pageSize, rounded);
 }
 

@@ -11,6 +11,7 @@
 
 #include <windows.h>
 #include <errno.h>
+#include <stdint.h>
 #include <psapi.h>
 #include <stdio.h>
 #include <tchar.h>
@@ -109,6 +110,14 @@ static void* (__cdecl* Real_aligned_offset_recalloc_dbg)(void*, size_t, size_t, 
 
 static void* __cdecl Detour_malloc(size_t sz) { return xxmalloc(sz); }
 static void __cdecl Detour_free(void* ptr) { if (ptr && IsOurPointer(ptr)) xxfree(ptr); }
+// Mul-overflow check for the (num, size) entry points. MSVC CRT semantics:
+// fail with ENOMEM rather than allocate a wrapped (tiny) product.
+static inline bool MulOverflows(size_t num, size_t size, size_t* out) {
+  if (size != 0 && num > SIZE_MAX / size) { errno = ENOMEM; return true; }
+  *out = num * size;
+  return false;
+}
+
 static void* __cdecl Detour_calloc(size_t num, size_t size) { return xxcalloc(num, size); }
 static void* __cdecl Detour_realloc(void* ptr, size_t sz) {
   if (!ptr) return xxmalloc(sz);
@@ -122,10 +131,36 @@ static void* __cdecl Detour_realloc(void* ptr, size_t sz) {
 }
 static size_t __cdecl Detour_msize(void* ptr) { return SafeGetAllocSize(ptr); }
 static void* __cdecl Detour_expand(void*, size_t) { return nullptr; }
+// Zero-fill for the _recalloc family. realloc preserved the first `keep`
+// bytes; zero everything from there to the new block's usable extent.
+//
+// The previous code zeroed [requested, usable) -- the slack PAST the request
+// -- so _recalloc(NULL, n, size), or any growth, returned every newly
+// requested byte holding recycled heap contents.
+//
+// Zeroing from keep = min(oldUsable, requested) to the new usable extent
+// clears every byte _recalloc adds (relative to the old _msize, which is the
+// usable size), and also clears the tail after an in-place shrink so a later
+// in-place regrow cannot expose stale data. Known limit: calloc zeroes only
+// num * size (zeroing the whole usable extent would cost every calloc), so
+// slack a calloc left unzeroed can resurface if _recalloc grows in place into
+// it. A foreign block (old size unknown, reported as 0) had `requested` bytes
+// copied best-effort; keep them.
+static inline size_t RecallocKeep(void* oldBlock, size_t oldSize, size_t requested) {
+  if (oldBlock != nullptr && oldSize == 0) return requested;
+  return (oldSize < requested) ? oldSize : requested;
+}
+
 static void* __cdecl Detour_recalloc(void* memblock, size_t num, size_t size) {
-  size_t requestedSize = num * size;
+  size_t requestedSize;
+  if (MulOverflows(num, size, &requestedSize)) return nullptr;
+  size_t oldSize = memblock ? SafeGetAllocSize(memblock) : 0;
   void* ptr = Detour_realloc(memblock, requestedSize);
-  if (ptr) { size_t actualSize = SafeGetAllocSize(ptr); if (actualSize > requestedSize) memset(static_cast<char*>(ptr) + requestedSize, 0, actualSize - requestedSize); }
+  if (ptr) {
+    size_t keep = RecallocKeep(memblock, oldSize, requestedSize);
+    size_t actualSize = SafeGetAllocSize(ptr);
+    if (actualSize > keep) memset(static_cast<char*>(ptr) + keep, 0, actualSize - keep);
+  }
   return ptr;
 }
 static char* __cdecl Detour_strdup(const char* s) { if (!s) return nullptr; size_t len = strlen(s) + 1; char* newStr = (char*)xxmalloc(len); if (newStr) memcpy(newStr, s, len); return newStr; }
@@ -138,9 +173,13 @@ static size_t __cdecl Detour_msize_dbg(void* ptr, int) { return Detour_msize(ptr
 
 static inline bool IsPowerOfTwo(size_t x) { return x && !(x & (x - 1)); }
 static void* AlignedOffsetAlloc(size_t size, size_t alignment, size_t offset) {
-  if (!IsPowerOfTwo(alignment) || alignment < sizeof(void*)) return nullptr;
+  if (!IsPowerOfTwo(alignment) || alignment < sizeof(void*)) { errno = EINVAL; return nullptr; }
+  // MSVC CRT contract: offset must lie inside the block.
+  if (size != 0 && offset >= size) { errno = EINVAL; return nullptr; }
   if (size == 0) size = 1;
   size_t extra = alignment + sizeof(void*);
+  // Guard size + extra against wraparound (it would under-allocate).
+  if (size > SIZE_MAX - extra) { errno = ENOMEM; return nullptr; }
   void* base = xxmalloc(size + extra);
   if (!base) return nullptr;
   uintptr_t baseAddr = reinterpret_cast<uintptr_t>(base);
@@ -188,15 +227,27 @@ static void* __cdecl Detour_aligned_offset_realloc(void* ptr, size_t size, size_
   return newPtr;
 }
 static void* __cdecl Detour_aligned_recalloc(void* ptr, size_t num, size_t size, size_t alignment) {
-  size_t newSize = num * size, oldSize = ptr ? Detour_aligned_msize(ptr, alignment, 0) : 0;
+  size_t newSize;
+  if (MulOverflows(num, size, &newSize)) return nullptr;
+  size_t oldSize = ptr ? Detour_aligned_msize(ptr, alignment, 0) : 0;
   void* newPtr = Detour_aligned_realloc(ptr, newSize, alignment);
-  if (newPtr && newSize > oldSize) memset(static_cast<char*>(newPtr) + oldSize, 0, newSize - oldSize);
+  if (newPtr) {
+    size_t keep = RecallocKeep(ptr, oldSize, newSize);
+    size_t usable = Detour_aligned_msize(newPtr, alignment, 0);
+    if (usable > keep) memset(static_cast<char*>(newPtr) + keep, 0, usable - keep);
+  }
   return newPtr;
 }
 static void* __cdecl Detour_aligned_offset_recalloc(void* ptr, size_t num, size_t size, size_t alignment, size_t offset) {
-  size_t newSize = num * size, oldSize = ptr ? Detour_aligned_msize(ptr, alignment, offset) : 0;
+  size_t newSize;
+  if (MulOverflows(num, size, &newSize)) return nullptr;
+  size_t oldSize = ptr ? Detour_aligned_msize(ptr, alignment, offset) : 0;
   void* newPtr = Detour_aligned_offset_realloc(ptr, newSize, alignment, offset);
-  if (newPtr && newSize > oldSize) memset(static_cast<char*>(newPtr) + oldSize, 0, newSize - oldSize);
+  if (newPtr) {
+    size_t keep = RecallocKeep(ptr, oldSize, newSize);
+    size_t usable = Detour_aligned_msize(newPtr, alignment, offset);
+    if (usable > keep) memset(static_cast<char*>(newPtr) + keep, 0, usable - keep);
+  }
   return newPtr;
 }
 static void* __cdecl Detour_aligned_malloc_dbg(size_t size, size_t alignment, const char*, int) { return Detour_aligned_malloc(size, alignment); }

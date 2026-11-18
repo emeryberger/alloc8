@@ -203,9 +203,15 @@ void* CUSTOM_PREFIX(valloc)(size_t sz) {
 extern "C" ATTRIBUTE_EXPORT
 void* CUSTOM_PREFIX(pvalloc)(size_t sz) {
   ALLOC8_SET_CALLER_RA();
-  // Round up to page size
   size_t pagesize = ALLOC8_PAGE_SIZE;
-  size_t rounded = (sz + pagesize - 1) & ~(pagesize - 1);
+  // Round up to a page multiple, guarding the round-up: for sz within a page
+  // of SIZE_MAX it wraps to 0, and the caller would get back one page while
+  // believing it owns ~SIZE_MAX bytes. pvalloc(0) yields one page (glibc).
+  if (ALLOC8_UNLIKELY(sz > SIZE_MAX - (pagesize - 1))) {
+    errno = ENOMEM;
+    return nullptr;
+  }
+  size_t rounded = (sz == 0) ? pagesize : (sz + pagesize - 1) & ~(pagesize - 1);
   return xxmemalign(pagesize, rounded);
 }
 
